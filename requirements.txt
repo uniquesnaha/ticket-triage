@@ -1,3 +1,17 @@
-# Vercel installs Python dependencies from the repository root.
-# The canonical list lives with the backend so Docker and local dev share it.
--r backend/requirements.txt
+# Runtime dependencies — the single source of truth.
+# Installed by Vercel (must live at the repo root, no -r includes), the Dockerfile,
+# and backend/requirements-dev.txt.
+
+fastapi==0.115.0
+# UploadFile / multipart form parsing
+python-multipart==0.0.12
+
+# GenAI framework: LangChain against Groq's OpenAI-compatible endpoint
+langchain-core==0.3.15
+langchain-openai==0.2.5
+
+pydantic==2.9.2
+pydantic-settings==2.7.1
+tenacity==9.0.0
+structlog==24.4.0
+slowapi==0.1.9

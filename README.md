@@ -210,13 +210,12 @@ push and PR. Tests never call the real LLM.
 │   │   ├── security/         auth, input (injection) guard, output (rationale) guard
 │   │   └── triage/           csv_loader, preprocessor, llm, guardrails, pipeline
 │   ├── tests/
-│   ├── requirements.txt      runtime deps (also used by Vercel via ../requirements.txt)
-│   ├── requirements-dev.txt
-│   └── Dockerfile            production image for non-Vercel hosting
+│   ├── requirements-dev.txt  test/lint tools (+ ../requirements.txt)
+│   └── Dockerfile            production image (build from repo root)
 ├── frontend/                 React + Vite + TypeScript
 ├── data/project_1.csv        assignment input
 ├── docs/guidelines.md        assignment brief
-├── requirements.txt          Vercel's Python install hook (→ backend/requirements.txt)
+├── requirements.txt          runtime Python deps (Vercel, Docker, dev)
 └── vercel.json
 ```
 

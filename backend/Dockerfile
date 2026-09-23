@@ -1,4 +1,5 @@
 # Production image for running the API outside Vercel (any container host).
+# Build from the repo root:  docker build -f backend/Dockerfile .
 # ── Stage 1: dependencies ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
@@ -15,7 +16,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 WORKDIR /app
 COPY --from=builder /venv /venv
-COPY app/ ./app/
+COPY backend/app/ ./app/
 
 ENV PATH="/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
