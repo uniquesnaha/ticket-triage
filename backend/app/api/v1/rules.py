@@ -14,6 +14,9 @@ CONDITION_LABELS = {
     "injection_flagged_high": "Prompt-injection pattern detected",
     "missing_text": "Ticket text is empty",
     "output_flagged": "Model rationale failed output checks",
+    "safety_risk": "Text mentions self-harm or violence",
+    "legal_threat": "Text mentions lawyers, lawsuits, chargebacks or regulators",
+    "abusive_language": "Text contains profanity or insults",
 }
 
 
@@ -24,6 +27,7 @@ class RuleInfo(BaseModel):
     condition: str | None
     sets: dict[str, str | bool]
     max_priority: str | None
+    min_priority: str | None
     corrects_sentiment_to: str | None
 
 
@@ -39,6 +43,7 @@ async def list_rules() -> list[RuleInfo]:
             else None,
             sets={k: v if isinstance(v, bool) else str(v) for k, v in rule.overrides.items()},
             max_priority=str(rule.max_priority) if rule.max_priority else None,
+            min_priority=str(rule.min_priority) if rule.min_priority else None,
             corrects_sentiment_to=str(rule.force_sentiment) if rule.force_sentiment else None,
         )
         for rule in RULES

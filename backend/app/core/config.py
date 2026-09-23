@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     max_tokens: int = Field(default=1024, gt=0)
     llm_timeout: float = Field(default=20.0, gt=0, description="Per-request timeout (seconds)")
     max_retries: int = Field(default=4, ge=1, le=10, description="Total LLM attempts per ticket")
+    # Prompt file in app/prompts/ (without .toml); switch versions without code changes.
+    triage_prompt: str = "triage"
     # "" = automatic ("low" for gpt-oss reasoning models, unset otherwise); "none" disables.
     llm_reasoning_effort: str = ""
     llm_concurrency: int = Field(default=4, ge=1, le=32, description="Parallel LLM calls per batch")

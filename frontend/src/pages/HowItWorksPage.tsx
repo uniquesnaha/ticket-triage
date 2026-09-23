@@ -17,6 +17,10 @@ const PIPELINE: { name: string; text: string }[] = [
     text: 'Look-alike characters are normalized and the text is checked for instructions aimed at the model. Suspicious tickets skip the model entirely.',
   },
   {
+    name: 'Protect',
+    text: 'Emails, phone numbers, card numbers, bank accounts and API keys are replaced with placeholders such as [EMAIL]. The model never sees them. Abuse, legal threats and self-harm are detected here too.',
+  },
+  {
     name: 'Clean',
     text: 'Device signatures, email sign-offs and repeated phrases are removed, and all-caps text is converted, so the model sees the actual request.',
   },
@@ -55,6 +59,7 @@ function ruleEffects(rule: RuleInfo): string[] {
     .filter(([field]) => field !== 'needs_human_review')
     .map(([field, value]) => `${FIELD_LABEL[field] ?? field}: ${formatValue(field, value)}`)
   if (rule.max_priority) effects.push(`Priority capped at ${formatValue('priority', rule.max_priority)}`)
+  if (rule.min_priority) effects.push(`Priority at least ${formatValue('priority', rule.min_priority)}`)
   if (rule.corrects_sentiment_to) {
     effects.push(
       `Negative or urgent sentiment becomes ${formatValue('sentiment', rule.corrects_sentiment_to)}`,

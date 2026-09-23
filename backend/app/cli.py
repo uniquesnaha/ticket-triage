@@ -77,7 +77,7 @@ async def _run(args: argparse.Namespace) -> int:
         body = json.dumps(records, ensure_ascii=False, indent=2) + "\n"
 
     if args.output:
-        args.output.write_text(body, encoding="utf-8")
+        args.output.write_text(body, encoding="utf-8", newline="\n")
     else:
         sys.stdout.write(body)
 

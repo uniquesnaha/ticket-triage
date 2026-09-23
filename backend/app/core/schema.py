@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.config import get_settings
 
@@ -54,6 +54,7 @@ class SecurityFlag(StrEnum):
     INJECTION_ATTEMPT = "injection_attempt"
     EXCESSIVE_LENGTH = "excessive_length"
     UNICODE_ANOMALY = "unicode_anomaly"
+    PII_REDACTED = "pii_redacted"
 
 
 class InputWarning(StrEnum):
@@ -136,6 +137,9 @@ class TriageBatchRequest(BaseModel):
 class FieldOverride(BaseModel):
     """One deterministic change to a model-derived field."""
 
+    # "model_" here means the LLM, not Pydantic internals.
+    model_config = ConfigDict(protected_namespaces=())
+
     field: str
     model_value: str | bool
     final_value: str | bool
@@ -144,6 +148,8 @@ class FieldOverride(BaseModel):
 
 class TriageResult(BaseModel):
     """Complete triage result: final decision plus a full provenance trail."""
+
+    model_config = ConfigDict(protected_namespaces=())
 
     ticket_id: str
     original_text: str
@@ -170,6 +176,9 @@ class TriageResult(BaseModel):
 
     # Metadata
     llm_model: str = ""
+    prompt_version: str = Field(
+        default="", description="Prompt that produced model_judgment, e.g. triage@1.0.0#..."
+    )
     is_llm_fallback: bool = False
     processing_time_ms: int = 0
     processed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -191,3 +200,4 @@ class HealthResponse(BaseModel):
     model: str
     version: str
     llm_configured: bool
+    prompt_version: str

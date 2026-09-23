@@ -16,8 +16,10 @@ from app.core.schema import (
     TicketInput,
     TriageResult,
 )
+from app.security.content_signals import detect_content_signals
 from app.security.input_guard import RiskLevel, scan_for_injection
 from app.security.output_guard import validate_output
+from app.security.pii import redact_pii
 from app.triage.guardrails import apply_guardrails
 from app.triage.llm import (
     ERROR_RESULT,
@@ -25,6 +27,7 @@ from app.triage.llm import (
     MISSING_TEXT_RESULT,
     TIMEOUT_RESULT,
     classify_ticket,
+    get_prompt,
 )
 from app.triage.preprocessor import preprocess
 
@@ -44,8 +47,9 @@ async def process_ticket(
     """
     Full triage pipeline for a single ticket.
 
-      1. Input security scan (injection detection, unicode normalisation, length)
-      2. Text preprocessing (deterministic cleaning)
+      1. Input security scan (injection detection, unicode normalisation, length) and
+         content signals (abuse, legal threats, safety risk)
+      2. PII redaction, then text preprocessing (deterministic cleaning)
       3. LLM classification (skipped for missing text and high-risk injections)
       4. Post-LLM output validation (leakage, forbidden content, unsupported evidence)
       5. Deterministic guardrails (recorded as field overrides)
@@ -69,8 +73,16 @@ async def process_ticket(
         security_flags.append(SecurityFlag.INJECTION_ATTEMPT)
         log.warning("injection_detected", matched_patterns=scan.matched_patterns)
 
-    # ── Step 2: Preprocessing ─────────────────────────────────────────────────
-    prep = preprocess(scan.normalized_text or ticket.text)
+    normalized = scan.normalized_text or ticket.text
+    signals = detect_content_signals(normalized)
+
+    # ── Step 2: PII redaction + preprocessing ─────────────────────────────────
+    # The model never needs contact or payment details to classify a ticket.
+    redaction = redact_pii(normalized)
+    if redaction.found:
+        security_flags.append(SecurityFlag.PII_REDACTED)
+    prep = preprocess(redaction.text)
+    prep.transforms_applied[:0] = [f"REDACT_{label}" for label in redaction.found]
 
     # ── Step 3: LLM classification ────────────────────────────────────────────
     model_judgment: LLMTriageOutput | None = None
@@ -102,6 +114,7 @@ async def process_ticket(
         injection_flagged_high=injection_flagged_high,
         missing_text=missing_text,
         output_flagged=output_flagged,
+        content_signals=signals.signals,
     )
 
     log.info(
@@ -131,6 +144,7 @@ async def process_ticket(
         security_flags=security_flags,
         input_warnings=warnings,
         llm_model=model_name,
+        prompt_version="" if is_llm_fallback else get_prompt().ref,
         is_llm_fallback=is_llm_fallback,
         processing_time_ms=int((time.monotonic() - start) * 1000),
     )

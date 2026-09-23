@@ -17,7 +17,11 @@ export type Sentiment = 'positive' | 'neutral' | 'negative' | 'urgent'
 
 export type CustomerImpact = 'all_customers' | 'multiple_customers' | 'single_customer' | 'none'
 
-export type SecurityFlag = 'injection_attempt' | 'excessive_length' | 'unicode_anomaly'
+export type SecurityFlag =
+  | 'injection_attempt'
+  | 'excessive_length'
+  | 'unicode_anomaly'
+  | 'pii_redacted'
 
 export type InputWarning =
   | 'missing_ticket_id'
@@ -58,6 +62,7 @@ export interface TriageResult {
   security_flags: SecurityFlag[]
   input_warnings: InputWarning[]
   llm_model: string
+  prompt_version: string
   is_llm_fallback: boolean
   processing_time_ms: number
   processed_at: string
@@ -79,6 +84,7 @@ export interface HealthResponse {
   model: string
   version: string
   llm_configured: boolean
+  prompt_version: string
 }
 
 export interface RuleInfo {
@@ -88,5 +94,6 @@ export interface RuleInfo {
   condition: string | null
   sets: Record<string, string | boolean>
   max_priority: string | null
+  min_priority: string | null
   corrects_sentiment_to: string | null
 }

@@ -63,6 +63,9 @@ export const RULE_LABEL: Record<string, string> = {
   INJECTION_FLAGGED: 'Instructions aimed at the model',
   MISSING_TEXT: 'Ticket text is missing',
   OUTPUT_SAFETY_REVIEW: 'Model rationale failed checks',
+  SAFETY_ESCALATION: 'Self-harm or violence mentioned',
+  LEGAL_THREAT: 'Legal action mentioned',
+  ABUSIVE_LANGUAGE: 'Abusive language',
 }
 
 export const PREPROCESS_LABEL: Record<string, string> = {
@@ -73,12 +76,20 @@ export const PREPROCESS_LABEL: Record<string, string> = {
   NORMALIZE_ALLCAPS: 'Converted all-caps text',
   COLLAPSE_WHITESPACE: 'Collapsed whitespace',
   FLAG_TRIVIAL: 'Flagged as very short',
+  REDACT_EMAIL: 'Redacted email address',
+  REDACT_PHONE: 'Redacted phone number',
+  REDACT_CARD: 'Redacted card number',
+  REDACT_IBAN: 'Redacted bank account',
+  REDACT_SSN: 'Redacted SSN',
+  REDACT_IP_ADDRESS: 'Redacted IP address',
+  REDACT_SECRET: 'Redacted API key',
 }
 
 export const SECURITY_LABEL: Record<SecurityFlag, string> = {
   injection_attempt: 'Prompt injection attempt',
   excessive_length: 'Text over length limit',
   unicode_anomaly: 'Look-alike characters',
+  pii_redacted: 'Personal data redacted before the model',
 }
 
 export const WARNING_LABEL: Record<InputWarning, string> = {

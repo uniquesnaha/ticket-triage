@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.security.pii import redact_pii
+
 
 @dataclass
 class OutputScanResult:
@@ -93,8 +95,11 @@ def validate_output(rationale: str, source_texts: list[str] | None = None) -> Ou
             issues.append("prompt_leakage_detected")
             break
 
+    source_blob = "\n".join(_normalize(t) for t in source_texts or [])
     for pattern in _HALLUCINATION:
-        if pattern.search(rationale):
+        match = pattern.search(rationale)
+        # A claim is only a hallucination if the ticket itself does not make it.
+        if match and _normalize(match.group(0)) not in source_blob:
             issues.append("hallucination_detected")
             break
 
@@ -109,6 +114,13 @@ def validate_output(rationale: str, source_texts: list[str] | None = None) -> Ou
     # Length sanity check
     if len(rationale) > MAX_RATIONALE_LENGTH:
         issues.append("rationale_too_long")
+
+    redacted = redact_pii(rationale)
+    if redacted.found and not issues:
+        # PII in the rationale is redacted rather than withholding the whole rationale.
+        return OutputScanResult(
+            is_safe=False, issues=["pii_in_output"], sanitized_rationale=redacted.text
+        )
 
     if issues:
         return OutputScanResult(

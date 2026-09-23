@@ -13,6 +13,7 @@ from app.core.schema import (
     InputWarning,
     LLMTriageOutput,
     Priority,
+    SecurityFlag,
     Sentiment,
     TicketInput,
 )
@@ -248,3 +249,75 @@ class TestBatch:
         results = await process_batch(tickets, "m", timeout=0.05)
         assert results[0].needs_human_review is True
         assert "BATCH_TIMEOUT" in results[0].rationale
+
+
+class TestPIIRedaction:
+    async def test_model_never_sees_pii(self, mock_llm: AsyncMock) -> None:
+        mock_llm.return_value = (make_mock_llm_response(category=Category.BILLING), False)
+        ticket = TicketInput(
+            ticket_id="T1",
+            text="Charged twice on card 4111 1111 1111 1111. Email me at jane@example.com.",
+        )
+        result = await process_ticket(ticket, model_name="m")
+        sent_to_model = mock_llm.call_args.args[1]
+        assert "4111" not in sent_to_model
+        assert "jane@example.com" not in sent_to_model
+        assert "[CARD]" in sent_to_model and "[EMAIL]" in sent_to_model
+        assert SecurityFlag.PII_REDACTED in result.security_flags
+        assert {"REDACT_CARD", "REDACT_EMAIL"} <= set(result.preprocessing_applied)
+        # The caller still gets their own original text back.
+        assert result.original_text == ticket.text
+
+    async def test_pii_in_rationale_is_redacted(self, mock_llm: AsyncMock) -> None:
+        mock_llm.return_value = (
+            make_mock_llm_response(rationale="Customer asked for a reply at bob@example.com."),
+            False,
+        )
+        ticket = TicketInput(ticket_id="T1", text="Please reply by email, the export is broken.")
+        result = await process_ticket(ticket, model_name="m")
+        assert "bob@example.com" not in result.rationale
+        assert "[EMAIL]" in result.rationale
+        assert "OUTPUT_SAFETY_REVIEW" in result.guardrails_applied
+
+
+class TestEscalationSignals:
+    async def test_legal_threat_raises_priority_even_if_not_urgent(
+        self, mock_llm: AsyncMock
+    ) -> None:
+        mock_llm.return_value = (make_mock_llm_response(priority=Priority.LOW), False)
+        ticket = TicketInput(
+            ticket_id="T1",
+            text="Not urgent, but if the invoice is not corrected we will take legal action.",
+        )
+        result = await process_ticket(ticket, model_name="m")
+        assert "LEGAL_THREAT" in result.guardrails_applied
+        assert result.priority == Priority.HIGH
+        assert result.needs_human_review is True
+
+    async def test_safety_risk_is_critical(self, mock_llm: AsyncMock) -> None:
+        mock_llm.return_value = (make_mock_llm_response(priority=Priority.MEDIUM), False)
+        ticket = TicketInput(
+            ticket_id="T1", text="If my account isn't restored I'm going to hurt myself."
+        )
+        result = await process_ticket(ticket, model_name="m")
+        assert "SAFETY_ESCALATION" in result.guardrails_applied
+        assert result.priority == Priority.CRITICAL
+        assert result.needs_human_review is True
+
+    async def test_abusive_language_needs_review(self, mock_llm: AsyncMock) -> None:
+        mock_llm.return_value = (make_mock_llm_response(), False)
+        ticket = TicketInput(ticket_id="T1", text="Your garbage app deleted my files again.")
+        result = await process_ticket(ticket, model_name="m")
+        assert "ABUSIVE_LANGUAGE" in result.guardrails_applied
+        assert result.needs_human_review is True
+
+    async def test_quoted_legal_claim_is_not_a_hallucination(self, mock_llm: AsyncMock) -> None:
+        mock_llm.return_value = (
+            make_mock_llm_response(
+                rationale='Customer says they "will file a lawsuit" if not refunded.'
+            ),
+            False,
+        )
+        ticket = TicketInput(ticket_id="T1", text="Refund me or I will file a lawsuit.")
+        result = await process_ticket(ticket, model_name="m")
+        assert "OUTPUT_SAFETY_TRIGGERED" not in result.rationale

@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.core.config import get_settings
 from app.core.schema import HealthResponse
+from app.triage.llm import get_prompt
 
 router = APIRouter()
 
@@ -20,4 +21,5 @@ async def health() -> HealthResponse:
         model=settings.model_name,
         version=settings.app_version,
         llm_configured=settings.llm_configured,
+        prompt_version=get_prompt().ref,
     )

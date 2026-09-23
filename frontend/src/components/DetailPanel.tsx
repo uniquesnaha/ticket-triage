@@ -173,8 +173,11 @@ export function DetailPanel({
       )}
 
       <footer className="detail-meta">
-        <span>
+        <span title={result.prompt_version ? `Prompt ${result.prompt_version}` : undefined}>
           <code>{result.llm_model || 'no model'}</code>
+          {result.prompt_version && (
+            <code className="muted"> · {result.prompt_version.split('#')[0]}</code>
+          )}
         </span>
         <span>{formatDuration(result.processing_time_ms)}</span>
       </footer>

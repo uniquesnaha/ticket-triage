@@ -15,6 +15,7 @@ class TestHealth:
         assert "model" in data
         assert "version" in data
         assert data["llm_configured"] is True
+        assert data["prompt_version"].startswith("triage@")
 
     def test_health_is_public(self, client: TestClient) -> None:
         # Health endpoint should be public

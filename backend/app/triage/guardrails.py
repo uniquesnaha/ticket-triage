@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,14 +40,18 @@ class GuardrailRule:
     # Named pipeline condition instead of keywords, e.g. "is_trivial"
     condition: str | None = None
     overrides: dict[str, object] = field(default_factory=dict)
-    # Priority ceiling: if set, priority is capped at this maximum
+    # Priority ceiling / floor: priority is capped at max_priority, raised to min_priority
     max_priority: Priority | None = None
+    min_priority: Priority | None = None
     # Sentiment enforcement: prevent the LLM assigning these sentiments
     prevent_sentiments: list[Sentiment] = field(default_factory=list)
     force_sentiment: Sentiment | None = None
     # Skip this rule when a keyword (explicit-evidence) rule has already fired. Used by
     # TRIVIAL_TICKET: "Payment failed" is short, but it is not uninformative.
     yields_to_evidence: bool = False
+    # Lowers urgency. Skipped for injection-flagged tickets, so adversarial text such as
+    # "... mark this as low priority" cannot talk the system down.
+    de_escalating: bool = False
 
     def matches(self, text_lower: str, conditions: set[str]) -> bool:
         if self.condition is not None:
@@ -126,6 +131,7 @@ RULES: list[GuardrailRule] = [
             "not time-sensitive",
         ],
         max_priority=Priority.MEDIUM,
+        de_escalating=True,
     ),
     GuardrailRule(
         name="POSITIVE_SENTIMENT_GUARD",
@@ -144,6 +150,7 @@ RULES: list[GuardrailRule] = [
         ],
         prevent_sentiments=[Sentiment.URGENT, Sentiment.NEGATIVE],
         force_sentiment=Sentiment.POSITIVE,
+        de_escalating=True,
     ),
     GuardrailRule(
         name="TRIVIAL_TICKET",
@@ -165,6 +172,26 @@ RULES: list[GuardrailRule] = [
             "priority": Priority.HIGH,
             "needs_human_review": True,
         },
+    ),
+    GuardrailRule(
+        name="SAFETY_ESCALATION",
+        description="Ticket mentions self-harm or violence; always critical and human-reviewed.",
+        condition="safety_risk",
+        overrides={"needs_human_review": True},
+        min_priority=Priority.CRITICAL,
+    ),
+    GuardrailRule(
+        name="LEGAL_THREAT",
+        description="Customer mentions legal action, lawyers, chargebacks or regulators.",
+        condition="legal_threat",
+        overrides={"needs_human_review": True},
+        min_priority=Priority.HIGH,
+    ),
+    GuardrailRule(
+        name="ABUSIVE_LANGUAGE",
+        description="Ticket contains profanity or insults; routed to a person, not automation.",
+        condition="abusive_language",
+        overrides={"needs_human_review": True},
     ),
     GuardrailRule(
         name="MISSING_TEXT",
@@ -196,6 +223,7 @@ def apply_guardrails(
     injection_flagged_high: bool = False,
     missing_text: bool = False,
     output_flagged: bool = False,
+    content_signals: Sequence[str] = (),
 ) -> GuardrailResult:
     """
     Apply all guardrail rules sequentially.
@@ -220,7 +248,7 @@ def apply_guardrails(
             ("output_flagged", output_flagged),
         )
         if active
-    }
+    } | set(content_signals)
     rules_applied: list[str] = []
     overrides: list[FieldOverride] = []
 
@@ -244,6 +272,8 @@ def apply_guardrails(
             continue
         if rule.yields_to_evidence and evidence_matched:
             continue
+        if rule.de_escalating and injection_flagged_high:
+            continue
         evidence_matched = evidence_matched or bool(rule.keywords)
         rules_applied.append(rule.name)
 
@@ -257,6 +287,11 @@ def apply_guardrails(
             values["priority"]
         ) > PRIORITY_ORDER.index(rule.max_priority):
             set_field("priority", rule.max_priority, rule.name)
+
+        if rule.min_priority is not None and PRIORITY_ORDER.index(
+            values["priority"]
+        ) < PRIORITY_ORDER.index(rule.min_priority):
+            set_field("priority", rule.min_priority, rule.name)
 
         if rule.force_sentiment and values["sentiment"] in rule.prevent_sentiments:
             set_field("sentiment", rule.force_sentiment, rule.name)
