@@ -136,7 +136,7 @@ export function QueueTable({
       </div>
 
       <div className="table-scroll">
-        <table className="table">
+        <table className="table table--queue">
           <thead>
             <tr>
               {sortHeader('ticket_id', 'ID')}

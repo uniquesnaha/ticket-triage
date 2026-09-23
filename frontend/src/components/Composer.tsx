@@ -1,7 +1,8 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
 import clsx from 'clsx'
-import { useSingleTicket } from '../hooks/useSingleTicket'
+import { api } from '../api/client'
 import { CATEGORY_LABEL } from '../lib/labels'
+import { clearQuickChecks, formatRelative, saveQuickCheck, useQuickChecks } from '../lib/store'
 import { DetailPanel } from './DetailPanel'
 import { PriorityTag } from './Tags'
 
@@ -24,21 +25,35 @@ const EXAMPLES = [
 ]
 
 export function Composer() {
-  const { history, pending, error, classify } = useSingleTicket()
+  const history = useQuickChecks()
   const [text, setText] = useState('')
-  const [shown, setShown] = useState(0)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [shownId, setShownId] = useState<string | null>(null)
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (!text.trim() || pending) return
-    if (await classify(text.trim())) setShown(0)
+    const body = text.trim()
+    if (!body || pending) return
+    setPending(true)
+    setError(null)
+    try {
+      const ticketId = `Q-${Date.now().toString(36).toUpperCase()}`
+      const response = await api.triageTickets([{ ticket_id: ticketId, text: body }])
+      saveQuickCheck(response.results[0])
+      setShownId(ticketId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Try again.')
+    } finally {
+      setPending(false)
+    }
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit()
   }
 
-  const current = history[shown]
+  const current = history.find((r) => r.ticket_id === shownId) ?? null
 
   return (
     <div className="composer">
@@ -102,21 +117,27 @@ export function Composer() {
         </div>
       )}
 
-      {history.length > 1 && (
-        <section className="composer-history" aria-label="Earlier tickets">
-          <h2>Earlier this session</h2>
+      {history.length > 0 && (
+        <section className="composer-history" aria-label="Recent quick checks">
+          <div className="section-head">
+            <h2>Recent quick checks</h2>
+            <button type="button" className="link-btn" onClick={clearQuickChecks}>
+              Clear
+            </button>
+          </div>
           <ul>
-            {history.map((r, i) => (
+            {history.map((r) => (
               <li key={r.ticket_id}>
                 <button
                   type="button"
-                  className={clsx('history-row', i === shown && 'history-row--active')}
-                  onClick={() => setShown(i)}
+                  className={clsx('history-row', r.ticket_id === shownId && 'history-row--active')}
+                  onClick={() => setShownId(r.ticket_id)}
                 >
                   <span className="history-text">{r.original_text}</span>
                   <span className="history-meta">
-                    {CATEGORY_LABEL[r.category]}
+                    <span className="hide-sm">{CATEGORY_LABEL[r.category]}</span>
                     <PriorityTag priority={r.priority} />
+                    <span className="muted hide-sm">{formatRelative(r.processed_at)}</span>
                   </span>
                 </button>
               </li>

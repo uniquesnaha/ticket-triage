@@ -7,7 +7,7 @@ plus a provenance trail showing exactly what the model decided and what rules ch
 
 - **CLI** — `python -m app.cli data/project_1.csv` → JSON Lines, one object per input row
 - **API** — FastAPI (`/api/v1/triage`, `/api/v1/triage/upload`)
-- **UI** — React workspace: upload a CSV or type a single ticket, filter the queue, and open any ticket to see the model's call next to each rule override
+- **UI** — web app with three areas: *New triage* (upload a CSV or type one ticket), *Runs* (history of batches, each at its own URL), and *How it works* (pipeline and the live rule list). Open any ticket to see the model's call next to each rule override
 - **Deploy** — one Vercel project: static frontend + Python serverless function
 
 The original assignment is in [docs/guidelines.md](docs/guidelines.md); the input data is
@@ -169,7 +169,8 @@ All endpoints are under `/api/v1` and need no API key. Errors use RFC 7807
 
 | Method | Path | Body |
 |---|---|---|
-| `GET` | `/health` | — (public) |
+| `GET` | `/health` | — |
+| `GET` | `/rules` | — (the guardrail rules, as used by *How it works*) |
 | `POST` | `/triage` | `{"tickets": [{"ticket_id": "T001", "text": "…"}]}` |
 | `POST` | `/triage/upload` | multipart `file` = CSV with `ticket_id,text` columns |
 
@@ -261,3 +262,7 @@ control rather than a shared key typed into the browser:
 - **Rate limits are per instance** (in memory). On serverless each warm instance counts
   separately; use a Redis-backed limiter for a global quota.
 - **No user accounts.** See [Access control](#access-control).
+- **History is per browser.** Runs and quick checks are saved in `localStorage` (up to 25
+  runs), not on the server. That is deliberate while there is no login: server-side history
+  would show every visitor's tickets to everyone. Add a database (e.g. Vercel Postgres via
+  Neon) together with authentication when the tool is shared by a team.

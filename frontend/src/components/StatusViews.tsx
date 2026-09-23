@@ -1,5 +1,5 @@
 import { WarningCircleIcon } from '@phosphor-icons/react'
-import { useElapsedSeconds } from '../hooks/useTriage'
+import { useElapsedSeconds } from '../state/TriageContext'
 
 interface ProcessingViewProps {
   fileName: string
@@ -12,18 +12,16 @@ export function ProcessingView({ fileName, ticketCount, startedAt }: ProcessingV
   const what = ticketCount ? `${ticketCount} tickets` : 'tickets'
 
   return (
-    <section className="page" aria-busy="true" aria-live="polite">
-      <header className="page-head">
-        <div>
-          <h1>Classifying {what}</h1>
-          <p className="page-sub">
-            <code>{fileName}</code> <span className="muted">{elapsed}s elapsed</span>
-          </p>
-        </div>
-      </header>
+    <section className="processing" aria-busy="true" aria-live="polite">
+      <div className="processing-head">
+        <h2>
+          Classifying {what} from <code>{fileName}</code>
+        </h2>
+        <span className="muted tabular">{elapsed}s</span>
+      </div>
       <p className="processing-note">
-        Tickets are classified in parallel. A batch of 10 usually takes 10 to 40 seconds,
-        longer if the model provider is rate limiting.
+        A batch of 10 usually takes 10 to 40 seconds, longer if the model provider is rate
+        limiting. You can leave this page; the run appears in the sidebar when it is done.
       </p>
       <div className="skeleton-table" aria-hidden="true">
         {Array.from({ length: Math.min(ticketCount ?? 6, 8) }, (_, i) => (
@@ -48,17 +46,15 @@ interface ErrorViewProps {
 
 export function ErrorView({ fileName, message, onRetry }: ErrorViewProps) {
   return (
-    <section className="page">
-      <div className="error-panel" role="alert">
-        <WarningCircleIcon size={22} weight="fill" className="error-icon" />
-        <div>
-          <h1>Could not triage {fileName}</h1>
-          <p>{message}</p>
-          <button type="button" className="btn btn-primary" onClick={onRetry}>
-            Choose another file
-          </button>
-        </div>
+    <div className="error-panel" role="alert">
+      <WarningCircleIcon size={22} weight="fill" className="error-icon" />
+      <div>
+        <h2>Could not triage {fileName}</h2>
+        <p>{message}</p>
+        <button type="button" className="btn btn-primary" onClick={onRetry}>
+          Try another file
+        </button>
       </div>
-    </section>
+    </div>
   )
 }

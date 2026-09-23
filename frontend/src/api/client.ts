@@ -1,4 +1,4 @@
-import type { HealthResponse, TriageBatchResponse } from '../types/triage'
+import type { HealthResponse, RuleInfo, TriageBatchResponse } from '../types/triage'
 
 // Same-origin API: a Vercel rewrite in production, the Vite proxy in development.
 
@@ -53,6 +53,8 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 90_0
 
 export const api = {
   health: () => request<HealthResponse>('/api/v1/health', {}, 10_000),
+
+  rules: () => request<RuleInfo[]>('/api/v1/rules', {}, 10_000),
 
   triageTickets: (tickets: { ticket_id: string; text: string }[]) =>
     request<TriageBatchResponse>('/api/v1/triage', {

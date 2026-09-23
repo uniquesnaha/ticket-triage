@@ -16,6 +16,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.health import router as health_router
+from app.api.v1.rules import router as rules_router
 from app.api.v1.triage import router as triage_router
 from app.core.config import get_settings
 from app.core.exceptions import (
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
 
     app.include_router(triage_router, prefix=API_PREFIX, tags=["Triage"])
     app.include_router(health_router, prefix=API_PREFIX, tags=["Health"])
+    app.include_router(rules_router, prefix=API_PREFIX, tags=["Rules"])
     return app
 
 

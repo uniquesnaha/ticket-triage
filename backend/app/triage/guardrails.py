@@ -34,6 +34,7 @@ class GuardrailRule:
     """A single deterministic override rule."""
 
     name: str
+    description: str = ""
     keywords: list[str] = field(default_factory=list)
     # Named pipeline condition instead of keywords, e.g. "is_trivial"
     condition: str | None = None
@@ -58,6 +59,7 @@ class GuardrailRule:
 RULES: list[GuardrailRule] = [
     GuardrailRule(
         name="OUTAGE_CRITICAL",
+        description="Ticket describes an outage affecting many or all customers.",
         keywords=[
             "production is down",
             "prod is down",
@@ -78,6 +80,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="SECURITY_REVIEW",
+        description="Ticket suggests someone else may have accessed the account.",
         keywords=[
             "accessed our account",
             "someone may have",
@@ -98,6 +101,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="PAYMENT_ANOMALY",
+        description="Ticket reports a duplicate or failed payment.",
         keywords=[
             "charged twice",
             "double charged",
@@ -110,6 +114,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="NOT_URGENT",
+        description="Customer explicitly says the issue is not urgent.",
         keywords=[
             "not urgent",
             "no rush",
@@ -124,6 +129,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="POSITIVE_SENTIMENT_GUARD",
+        description="Ticket uses explicitly positive wording.",
         keywords=[
             "love the",
             "love your",
@@ -141,6 +147,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="TRIVIAL_TICKET",
+        description="Ticket is too short to classify (skipped if another rule found evidence).",
         condition="is_trivial",
         yields_to_evidence=True,
         overrides={
@@ -151,6 +158,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="INJECTION_FLAGGED",
+        description="Ticket contains instructions aimed at the model; the model is skipped.",
         condition="injection_flagged_high",
         overrides={
             "category": Category.SECURITY,
@@ -160,6 +168,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="MISSING_TEXT",
+        description="Ticket row has no text; it is never sent to the model.",
         condition="missing_text",
         overrides={
             "category": Category.UNKNOWN,
@@ -170,6 +179,7 @@ RULES: list[GuardrailRule] = [
     ),
     GuardrailRule(
         name="OUTPUT_SAFETY_REVIEW",
+        description="Model rationale leaked the prompt or cited text not in the ticket.",
         condition="output_flagged",
         overrides={"needs_human_review": True},
     ),

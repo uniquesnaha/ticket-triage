@@ -80,3 +80,13 @@ export interface HealthResponse {
   version: string
   llm_configured: boolean
 }
+
+export interface RuleInfo {
+  name: string
+  description: string
+  keywords: string[]
+  condition: string | null
+  sets: Record<string, string | boolean>
+  max_priority: string | null
+  corrects_sentiment_to: string | null
+}
