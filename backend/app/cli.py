@@ -15,18 +15,14 @@ import argparse
 import asyncio
 import io
 import json
-import os
 import sys
 from collections import Counter
 from pathlib import Path
 
-# The CLI does not serve HTTP, so the API key is irrelevant; don't make it mandatory.
-os.environ.setdefault("TRIAGE_API_KEY", "cli-mode-no-http-auth-required")
-
-from app.core.config import get_settings  # noqa: E402
-from app.core.logging import configure_logging  # noqa: E402
-from app.triage.csv_loader import CSVFormatError, decode_csv_bytes, parse_tickets_csv  # noqa: E402
-from app.triage.pipeline import process_batch  # noqa: E402
+from app.core.config import get_settings
+from app.core.logging import configure_logging
+from app.triage.csv_loader import CSVFormatError, decode_csv_bytes, parse_tickets_csv
+from app.triage.pipeline import process_batch
 
 EXIT_OK = 0
 EXIT_INPUT_ERROR = 2

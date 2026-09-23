@@ -1,183 +1,142 @@
-import { useCallback, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Download, RefreshCw } from 'lucide-react'
-import type { TriageResult, TriageBatchResponse } from './types/triage'
-import { accessKey } from './api/client'
-import { AccessKeyForm } from './components/AccessKeyForm'
-import { Header } from './components/Header'
-import { UploadZone } from './components/UploadZone'
-import { ProgressTracker } from './components/ProgressTracker'
-import { StatsPanel } from './components/StatsPanel'
-import { ResultsTable } from './components/ResultsTable'
-import { TicketCard } from './components/TicketCard'
+import { useEffect, useState } from 'react'
+import { ArrowClockwiseIcon, DownloadSimpleIcon } from '@phosphor-icons/react'
+import clsx from 'clsx'
+import { api } from './api/client'
 import { useTriage } from './hooks/useTriage'
+import { exportCSV, exportJSONL } from './lib/export'
+import { formatDuration } from './lib/labels'
+import type { TriageBatchResponse, TriageResult } from './types/triage'
+import { DetailPanel } from './components/DetailPanel'
+import { Intake } from './components/Intake'
+import { QueueTable, useQueue } from './components/QueueTable'
+import { ErrorView, ProcessingView } from './components/StatusViews'
+import { Summary } from './components/Summary'
+import { TopBar, type HealthState } from './components/TopBar'
 import './styles/index.css'
 
-function saveFile(content: string, type: string, filename: string) {
-  const url = URL.createObjectURL(new Blob([content], { type }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function downloadJSON(response: TriageBatchResponse) {
-  saveFile(JSON.stringify(response.results, null, 2), 'application/json', 'triage_results.json')
-}
-
-// RFC 4180 quoting, plus neutralising leading =,+,-,@ so spreadsheet apps don't
-// execute ticket text as a formula (CSV injection).
-function csvCell(value: unknown): string {
-  let text = String(value)
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-}
-
-function downloadCSV(results: TriageResult[]) {
-  const headers = [
-    'ticket_id', 'category', 'priority', 'sentiment', 'customer_impact',
-    'needs_human_review', 'guardrails_applied', 'preprocessing_applied',
-    'security_flags', 'input_warnings', 'is_llm_fallback', 'processing_time_ms', 'rationale',
-  ]
-  const rows = results.map((r) =>
-    [
-      r.ticket_id, r.category, r.priority, r.sentiment, r.customer_impact,
-      r.needs_human_review, r.guardrails_applied.join('|'), r.preprocessing_applied.join('|'),
-      r.security_flags.join('|'), r.input_warnings.join('|'), r.is_llm_fallback,
-      r.processing_time_ms, r.rationale,
-    ].map(csvCell).join(','),
+function isTyping(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName))
   )
-  saveFile([headers.join(','), ...rows].join('\r\n'), 'text/csv', 'triage_results.csv')
+}
+
+function ResultsView({
+  fileName,
+  response,
+  onReset,
+}: {
+  fileName: string
+  response: TriageBatchResponse
+  onReset: () => void
+}) {
+  const { results } = response
+  const queue = useQueue(results)
+  const [selected, setSelected] = useState<TriageResult | null>(null)
+  const index = selected ? queue.visible.indexOf(selected) : -1
+  const prev = index > 0 ? queue.visible[index - 1] : null
+  const next = index >= 0 && index < queue.visible.length - 1 ? queue.visible[index + 1] : null
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'Escape') {
+        setSelected(null)
+      } else if (e.key === 'j' || e.key === 'ArrowDown') {
+        const target = next ?? (selected ? null : queue.visible[0])
+        if (!target) return
+        setSelected(target)
+        e.preventDefault()
+      } else if ((e.key === 'k' || e.key === 'ArrowUp') && prev) {
+        setSelected(prev)
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [next, prev, selected, queue.visible])
+
+  return (
+    <div className="page page--wide">
+      <header className="page-head">
+        <div>
+          <h1>{fileName}</h1>
+          <p className="page-sub">
+            {response.total} tickets triaged in {formatDuration(response.processing_time_ms)} with{' '}
+            <code>{response.model}</code>
+          </p>
+        </div>
+        <div className="page-actions">
+          <button type="button" className="btn btn-quiet" onClick={onReset}>
+            <ArrowClockwiseIcon size={15} />
+            New file
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => exportCSV(results, fileName)}
+          >
+            <DownloadSimpleIcon size={15} />
+            CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => exportJSONL(results, fileName)}
+          >
+            <DownloadSimpleIcon size={15} />
+            JSONL
+          </button>
+        </div>
+      </header>
+
+      <Summary results={results} />
+
+      <div className={clsx('workspace', selected && 'workspace--split')}>
+        <QueueTable results={results} selected={selected} onSelect={setSelected} queue={queue} />
+        {selected && (
+          <DetailPanel
+            result={selected}
+            onClose={() => setSelected(null)}
+            onPrev={prev ? () => setSelected(prev) : null}
+            onNext={next ? () => setSelected(next) : null}
+          />
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function App() {
-  const [hasKey, setHasKey] = useState(() => Boolean(accessKey.get()))
-  const handleUnauthorized = useCallback(() => setHasKey(false), [])
-  const { status, response, error, uploadCSV, reset } = useTriage(handleUnauthorized)
-  const [selectedResult, setSelectedResult] = useState<TriageResult | null>(null)
-  const [fileName, setFileName] = useState('')
+  const { state, submit, reset } = useTriage()
+  const [health, setHealth] = useState<HealthState>('loading')
 
-  const saveKey = (key: string) => {
-    accessKey.set(key)
-    setHasKey(true)
-  }
-
-  const forgetKey = () => {
-    accessKey.clear()
-    setHasKey(false)
-  }
-
-  const handleFile = (file: File) => {
-    setFileName(file.name)
-    uploadCSV(file)
-  }
+  useEffect(() => {
+    api.health().then(setHealth, () => setHealth('unreachable'))
+  }, [])
 
   return (
-    <div className="app">
-      <Header />
-
-      <main className="main">
-        <AnimatePresence mode="wait">
-          {/* Idle: upload zone */}
-          {status === 'idle' && (
-            <motion.div
-              key="upload"
-              className="upload-page"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <div className="upload-hero">
-                <h2 className="hero-title">Triage Support Tickets with AI</h2>
-                <p className="hero-subtitle">
-                  Upload a CSV file and get structured triage results — category, priority,
-                  sentiment, customer impact, and human review flags — in seconds.
-                </p>
-              </div>
-              {hasKey ? (
-                <>
-                  <UploadZone onFile={handleFile} />
-                  <div className="sample-hint">
-                    <p>
-                      Need a test file?{' '}
-                      <a href="/project_1.csv" download className="sample-link">
-                        Download sample CSV ↓
-                      </a>
-                      {' · '}
-                      <button type="button" className="link-button" onClick={forgetKey}>
-                        Change access key
-                      </button>
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <AccessKeyForm onSubmit={saveKey} />
-              )}
-            </motion.div>
-          )}
-
-          {/* Processing */}
-          {status === 'processing' && (
-            <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <ProgressTracker fileName={fileName} />
-            </motion.div>
-          )}
-
-          {/* Error */}
-          {status === 'error' && (
-            <motion.div
-              key="error"
-              className="error-card"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-            >
-              <h3 className="error-title">Processing Failed</h3>
-              <p className="error-message">{error}</p>
-              <button className="btn btn-secondary" onClick={reset}>
-                <RefreshCw size={16} /> Try Again
-              </button>
-            </motion.div>
-          )}
-
-          {/* Success: results dashboard */}
-          {status === 'success' && response && (
-            <motion.div
-              key="results"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              {/* Toolbar */}
-              <div className="results-toolbar">
-                <h2 className="results-heading">Triage Results</h2>
-                <div className="results-actions">
-                  <button className="btn btn-ghost" onClick={reset}>
-                    <RefreshCw size={16} /> New Upload
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => downloadCSV(response.results)}>
-                    <Download size={16} /> Download CSV
-                  </button>
-                  <button className="btn btn-primary" onClick={() => downloadJSON(response)}>
-                    <Download size={16} /> Download JSON
-                  </button>
-                </div>
-              </div>
-
-              <StatsPanel response={response} />
-
-              <div className="table-section">
-                <h3 className="section-title">All Tickets</h3>
-                <ResultsTable results={response.results} onRowClick={setSelectedResult} />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+    <>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <TopBar health={health} onHome={reset} />
+      <main id="main">
+        {state.status === 'idle' && <Intake onFile={submit} disabled={false} />}
+        {state.status === 'processing' && (
+          <ProcessingView
+            fileName={state.fileName}
+            ticketCount={state.ticketCount}
+            startedAt={state.startedAt}
+          />
+        )}
+        {state.status === 'error' && (
+          <ErrorView fileName={state.fileName} message={state.message} onRetry={reset} />
+        )}
+        {state.status === 'success' && (
+          <ResultsView fileName={state.fileName} response={state.response} onReset={reset} />
+        )}
       </main>
-
-      {/* Ticket detail drawer */}
-      <TicketCard result={selectedResult} onClose={() => setSelectedResult(null)} />
-    </div>
+    </>
   )
 }

@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     )
 
     # ── API security ──────────────────────────────────────────────────────────
-    triage_api_key: SecretStr = Field(..., description="Shared secret for X-API-Key auth")
+    # Optional. Unset = open API (the web UI needs no key). Set = every triage request
+    # must send it as X-API-Key (for private or API-only deployments).
+    triage_api_key: SecretStr | None = None
 
     # ── App ───────────────────────────────────────────────────────────────────
     environment: str = "development"
@@ -60,8 +62,8 @@ class Settings(BaseSettings):
     max_tickets_per_batch: int = Field(default=50, ge=1)
     max_ticket_length: int = Field(default=2000, ge=1)
     max_csv_size_mb: int = Field(default=4, ge=1)  # Vercel caps bodies at 4.5 MB
-    rate_limit_triage: str = "30/minute"
-    rate_limit_upload: str = "10/minute"
+    rate_limit_triage: str = "20/minute"
+    rate_limit_upload: str = "6/minute"
 
     # ── Platform (set automatically by Vercel at runtime) ─────────────────────
     vercel: bool = False
@@ -82,7 +84,9 @@ class Settings(BaseSettings):
 
     @field_validator("triage_api_key")
     @classmethod
-    def _key_strength(cls, v: SecretStr) -> SecretStr:
+    def _key_strength(cls, v: SecretStr | None) -> SecretStr | None:
+        if v is None or not v.get_secret_value():
+            return None
         if len(v.get_secret_value()) < 16:
             raise ValueError("TRIAGE_API_KEY must be at least 16 characters")
         return v
@@ -94,6 +98,10 @@ class Settings(BaseSettings):
     @property
     def docs_enabled(self) -> bool:
         return not self.is_production
+
+    @property
+    def auth_required(self) -> bool:
+        return self.triage_api_key is not None
 
     @property
     def llm_configured(self) -> bool:

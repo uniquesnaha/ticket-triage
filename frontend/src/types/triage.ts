@@ -1,4 +1,4 @@
-// All TypeScript types matching the backend Pydantic schemas
+// Mirrors the backend Pydantic schemas (backend/app/core/schema.py).
 
 export type Category =
   | 'billing'
@@ -15,11 +15,7 @@ export type Priority = 'critical' | 'high' | 'medium' | 'low'
 
 export type Sentiment = 'positive' | 'neutral' | 'negative' | 'urgent'
 
-export type CustomerImpact =
-  | 'all_customers'
-  | 'multiple_customers'
-  | 'single_customer'
-  | 'none'
+export type CustomerImpact = 'all_customers' | 'multiple_customers' | 'single_customer' | 'none'
 
 export type SecurityFlag = 'injection_attempt' | 'excessive_length' | 'unicode_anomaly'
 
@@ -39,15 +35,10 @@ export interface ModelJudgment {
 }
 
 export interface FieldOverride {
-  field: string
+  field: keyof Omit<ModelJudgment, 'rationale'>
   model_value: string | boolean
   final_value: string | boolean
   rule: string
-}
-
-export interface TicketInput {
-  ticket_id: string
-  text: string
 }
 
 export interface TriageResult {
@@ -82,13 +73,11 @@ export interface TriageBatchResponse {
   model: string
 }
 
-export interface TriageBatchRequest {
-  tickets: TicketInput[]
-}
-
-// UI-specific derived types
-export type TriageFilter = {
-  category: Category | 'all'
-  priority: Priority | 'all'
-  needsReview: boolean | null
+export interface HealthResponse {
+  status: 'ok' | 'degraded'
+  environment: string
+  model: string
+  version: string
+  llm_configured: boolean
+  auth_required: boolean
 }

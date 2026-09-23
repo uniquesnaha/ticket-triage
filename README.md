@@ -7,7 +7,7 @@ plus a provenance trail showing exactly what the model decided and what rules ch
 
 - **CLI** — `python -m app.cli data/project_1.csv` → JSON Lines, one object per input row
 - **API** — FastAPI (`/api/v1/triage`, `/api/v1/triage/upload`)
-- **UI** — React dashboard (upload CSV → results table → per-ticket audit drawer)
+- **UI** — React workspace: upload a CSV, filter the queue, open any ticket to see the model's call next to each rule override
 - **Deploy** — one Vercel project: static frontend + Python serverless function
 
 The original assignment is in [docs/guidelines.md](docs/guidelines.md); the input data is
@@ -75,7 +75,7 @@ Rules may only *escalate* `needs_human_review`, never clear it.
 Prerequisites: Python 3.12, Node 20+, a free Groq API key from <https://console.groq.com/keys>.
 
 ```bash
-cp .env.example .env          # set GROQ_API_KEY and TRIAGE_API_KEY
+cp .env.example .env          # set GROQ_API_KEY
 ```
 
 ### CLI — the assignment deliverable
@@ -103,8 +103,7 @@ cd backend && uvicorn app.main:app --reload            # http://localhost:8000/a
 cd frontend && npm ci && npm run dev                   # http://localhost:5173
 ```
 
-Enter your `TRIAGE_API_KEY` in the UI when prompted. Or run both with
-`docker compose up --build`.
+Open the UI and click **Try the sample**. Or run both with `docker compose up --build`.
 
 ---
 
@@ -124,16 +123,15 @@ deploys `api/index.py` (which imports `backend/app`) as a Python serverless func
    | Name | Value |
    |---|---|
    | `GROQ_API_KEY` | your `gsk_…` key |
-   | `TRIAGE_API_KEY` | a long random string: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
    | `ENVIRONMENT` | `production` |
    | `MODEL_NAME` | *(optional)* default `openai/gpt-oss-120b` |
    | `ALLOWED_HOSTS` | *(only for a custom domain)* e.g. `triage.example.com` |
 
-   Do **not** create any `VITE_*` secret: the frontend bundle is public, so the access key is
-   entered by users at runtime instead.
+   Don't set `TRIAGE_API_KEY` for a public UI deployment (see [Access control](#access-control)),
+   and never put secrets in `VITE_*` variables: they are compiled into the public bundle.
 4. **Deploy.** When it finishes, open `https://<project>.vercel.app/api/v1/health` and
    check that it shows `"status": "ok"` and `"llm_configured": true`.
-5. Open the site, enter the `TRIAGE_API_KEY`, and upload `data/project_1.csv`.
+5. Open the site and click **Try the sample**, or upload your own CSV.
 
 Vercel-specific notes:
 
@@ -154,7 +152,7 @@ All settings are environment variables (see [.env.example](.env.example)). The m
 | Variable | Default | Notes |
 |---|---|---|
 | `GROQ_API_KEY` | — | Required for real classification; without it `/health` reports `degraded`. |
-| `TRIAGE_API_KEY` | — | Required, ≥ 16 chars. Sent by clients as `X-API-Key`. |
+| `TRIAGE_API_KEY` | unset | Optional. When set, triage calls need `X-API-Key` (disables browser use). |
 | `MODEL_NAME` | `openai/gpt-oss-120b` | Any Groq model with tool calling. |
 | `LLM_REASONING_EFFORT` | auto | `low` for gpt-oss models; `none` to disable. |
 | `MAX_RETRIES` | `4` | Total LLM attempts per ticket. |
@@ -167,8 +165,8 @@ All settings are environment variables (see [.env.example](.env.example)). The m
 
 ## API
 
-All endpoints are under `/api/v1`. Triage endpoints require `X-API-Key`. Errors use RFC 7807
-`application/problem+json`.
+All endpoints are under `/api/v1`. Triage endpoints require `X-API-Key` only when
+`TRIAGE_API_KEY` is set. Errors use RFC 7807 `application/problem+json`.
 
 | Method | Path | Body |
 |---|---|---|
@@ -223,9 +221,7 @@ push and PR. Tests never call the real LLM.
 
 ## Security
 
-- **No secrets in code or the bundle.** Credentials come only from the environment; the UI
-  asks for the access key and keeps it in `sessionStorage` for that tab.
-- **Auth:** shared API key, compared in constant time.
+- **No secrets in code or the bundle.** The Groq key lives only in server environment variables.
 - **Prompt injection:** pattern scan before the LLM (high-risk tickets never reach it),
   sentinel-delimited untrusted input, schema-bound tool output, post-LLM rationale checks.
 - **HTTP:** trusted-host allowlist, strict CORS, CSP and security headers on API and static
@@ -233,6 +229,25 @@ push and PR. Tests never call the real LLM.
 - **Limits:** batch size, text length, upload size, and per-IP rate limits.
 - **Logging:** structured JSON in production; ticket text and error payloads are truncated.
 - **CSV export** in the UI neutralises spreadsheet formula injection.
+
+## Access control
+
+The web UI has no login. Anyone with the URL can triage up to 50 tickets per request. That
+is deliberate for a demo, and the exposure is small:
+
+- The Groq key never leaves the server. The worst an outsider can do is use up the free-tier
+  quota, which costs nothing and resets every minute or day.
+- Per-IP rate limits (20 JSON / 6 upload requests a minute), batch and size caps, and
+  prompt-injection screening all still apply.
+
+When that stops being acceptable (real customer data, a paid LLM account), add real access
+control rather than a shared key typed into the browser:
+
+- **Vercel Deployment Protection** (Vercel login or password) in front of the whole site, or
+- SSO/OAuth at the edge (e.g. Auth.js, Clerk).
+
+`TRIAGE_API_KEY` remains for **API-only** use (scripts, other services calling
+`/api/v1/triage`); when it is set, the browser UI cannot call the API.
 
 ## Known limitations
 
@@ -242,5 +257,4 @@ push and PR. Tests never call the real LLM.
   tier or lower `LLM_CONCURRENCY`.
 - **Rate limits are per instance** (in memory). On serverless each warm instance counts
   separately; use a Redis-backed limiter for a global quota.
-- **One shared access key.** Fine for an internal tool; put real user auth (SSO/OAuth)
-  in front of it before exposing it more widely.
+- **No user accounts.** See [Access control](#access-control).

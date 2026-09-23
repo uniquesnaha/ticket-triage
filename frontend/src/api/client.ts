@@ -1,16 +1,6 @@
-import axios, { AxiosError } from 'axios'
-import type { TriageBatchRequest, TriageBatchResponse } from '../types/triage'
+import type { HealthResponse, TriageBatchResponse } from '../types/triage'
 
-// The API is served from the same origin (Vercel rewrite in production, Vite proxy in dev).
-// The access key is typed in by the user and kept only for this browser tab. It is never
-// embedded in the JS bundle.
-const ACCESS_KEY_STORAGE = 'triage.accessKey'
-
-export const accessKey = {
-  get: (): string => sessionStorage.getItem(ACCESS_KEY_STORAGE) ?? '',
-  set: (key: string): void => sessionStorage.setItem(ACCESS_KEY_STORAGE, key.trim()),
-  clear: (): void => sessionStorage.removeItem(ACCESS_KEY_STORAGE),
-}
+// Same-origin API: a Vercel rewrite in production, the Vite proxy in development.
 
 export class ApiError extends Error {
   constructor(
@@ -23,44 +13,52 @@ export class ApiError extends Error {
 }
 
 interface ProblemDetails {
-  detail?: string | { msg: string; loc?: (string | number)[] }[]
+  detail?: string | { msg: string }[]
 }
 
-function toApiError(error: AxiosError<ProblemDetails>): ApiError {
-  const status = error.response?.status ?? null
-  const detail = error.response?.data?.detail
-  let message: string
-  if (typeof detail === 'string') message = detail
-  else if (Array.isArray(detail)) message = detail.map((d) => d.msg).join('; ')
-  else if (error.code === 'ECONNABORTED') message = 'The request timed out. Try a smaller batch.'
-  else if (status === 504) message = 'The server took too long to respond. Try a smaller batch.'
-  else message = error.message
-  return new ApiError(message, status)
+function messageFor(status: number, body: ProblemDetails | null): string {
+  switch (status) {
+    case 401:
+      return 'This server requires an API key, so the web app cannot use it. Unset TRIAGE_API_KEY on the server to allow browser access.'
+    case 413:
+      return 'The file is too large. The limit is 4 MB.'
+    case 429:
+      return 'Too many requests from this address. Wait a minute and try again.'
+    case 502:
+    case 504:
+      return 'The server took too long to respond. Try again with fewer tickets.'
+  }
+  const detail = body?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) return detail.map((d) => d.msg).join('; ')
+  return `The server returned an error (${status}). Try again.`
 }
 
-const apiClient = axios.create({ timeout: 90_000 })
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 90_000): Promise<T> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(path, { ...init, signal: controller.signal })
+    const body = (await response.json().catch(() => null)) as unknown
+    if (!response.ok) throw new ApiError(messageFor(response.status, body as ProblemDetails | null), response.status)
+    return body as T
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('The request timed out. Try again with fewer tickets.', null)
+    }
+    throw new ApiError('Could not reach the server. Check your connection and try again.', null)
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
 
-apiClient.interceptors.request.use((config) => {
-  const key = accessKey.get()
-  if (key) config.headers.set('X-API-Key', key)
-  return config
-})
+export const api = {
+  health: () => request<HealthResponse>('/api/v1/health', {}, 10_000),
 
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError<ProblemDetails>) => Promise.reject(toApiError(error)),
-)
-
-export const triageAPI = {
-  triageJSON: async (request: TriageBatchRequest): Promise<TriageBatchResponse> => {
-    const { data } = await apiClient.post<TriageBatchResponse>('/api/v1/triage', request)
-    return data
-  },
-
-  triageCSV: async (file: File): Promise<TriageBatchResponse> => {
-    const formData = new FormData()
-    formData.append('file', file)
-    const { data } = await apiClient.post<TriageBatchResponse>('/api/v1/triage/upload', formData)
-    return data
+  triageCSV: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<TriageBatchResponse>('/api/v1/triage/upload', { method: 'POST', body: form })
   },
 }

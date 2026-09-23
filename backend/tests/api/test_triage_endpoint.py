@@ -57,6 +57,25 @@ class TestAuth:
         )
         assert resp.status_code == 200
 
+    def test_open_mode_when_no_key_configured(
+        self, client: TestClient, mock_llm: AsyncMock
+    ) -> None:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        original = settings.triage_api_key
+        settings.triage_api_key = None
+        try:
+            resp = client.post(
+                "/api/v1/triage",
+                json={"tickets": [{"ticket_id": "T1", "text": "My payment failed."}]},
+            )
+            health = client.get("/api/v1/health").json()
+        finally:
+            settings.triage_api_key = original
+        assert resp.status_code == 200
+        assert health["auth_required"] is False
+
 
 class TestTriageJSON:
     def test_returns_correct_structure(

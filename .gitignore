@@ -21,8 +21,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -32,6 +32,9 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.claude/
+.agents/
+skills-lock.json
 
 # Testing & Coverage
 .pytest_cache/
@@ -66,3 +69,8 @@ frontend/dist-ssr/
 *~
 .DS_Store
 Thumbs.db
+
+# Locally installed agent skills (npx skills add ...)
+.agents/
+.claude/
+skills-lock.json

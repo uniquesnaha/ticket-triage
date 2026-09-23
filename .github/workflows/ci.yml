@@ -34,10 +34,7 @@ jobs:
       - run: ruff check app tests
       - run: ruff format --check app tests
       - run: mypy app
-      - name: pytest
-        env:
-          TRIAGE_API_KEY: ci-triage-key-0123456789
-        run: pytest --cov=app --cov-report=term-missing
+      - run: pytest --cov=app --cov-report=term-missing
 
   frontend:
     name: Frontend — lint, types, build
