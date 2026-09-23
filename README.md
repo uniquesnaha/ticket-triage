@@ -183,29 +183,29 @@ pytest tests/ --cov=app --cov-report=term-missing
 
 ---
 
-## Production Deployment (100% Free on Render)
+## Production Deployment (100% Free on Vercel)
 
-The entire application (FastAPI backend + React frontend) deploys on **[Render](https://render.com)** using the included `render.yaml` Blueprint.
+The entire fullstack application (FastAPI backend serverless functions + React frontend) deploys directly to **[Vercel](https://vercel.com)** under a single domain.
 
 ### 1. Push to GitHub
 ```bash
 git add .
-git commit -m "feat: production ticket triage application"
-git remote add origin https://github.com/YOUR_USERNAME/ticket-triage.git
+git commit -m "feat: complete ticket triage production application for vercel"
 git push -u origin main
 ```
 
-### 2. Deploy via Render Blueprint
-1. Go to **[dashboard.render.com](https://dashboard.render.com)** and sign in.
-2. Click **New +** → **Blueprint**.
-3. Connect your repository.
-4. Render automatically detects `render.yaml` and sets up:
-   - `ticket-triage-api`: Python FastAPI Web Service
-   - `ticket-triage-ui`: React Static Site
-5. Enter your `GROQ_API_KEY` when prompted.
-6. Click **Apply**.
+### 2. Deploy on Vercel
+1. Go to **[vercel.com](https://vercel.com)** and sign in.
+2. Click **"Add New Project"** and import your repository.
+3. In **Environment Variables**, add:
+   - `GROQ_API_KEY`: *(your `gsk_...` key)*
+   - `GROQ_BASE_URL`: `https://api.groq.com/openai/v1`
+   - `MODEL_NAME`: `openai/gpt-oss-120b`
+   - `TRIAGE_API_KEY`: `your-secret-triage-api-key-here`
+   - `VITE_API_KEY`: `your-secret-triage-api-key-here`
+4. Click **Deploy**.
 
-Render builds and provides public HTTPS URLs for both services.
+Vercel automatically builds the Vite frontend, runs the FastAPI backend on serverless Python, and serves both under your production URL (e.g. `https://ticket-triage.vercel.app`).
 
 ---
 
@@ -269,6 +269,7 @@ ticket-triage/
 │   ├── api/            — Axios client
 │   └── types/          — TypeScript types
 ├── tests/              — pytest test suite
-├── render.yaml         — 1-Click Render Blueprint deployment
+├── api/index.py        — Vercel Serverless Function entrypoint
+├── vercel.json         — Vercel Fullstack routing configuration
 └── .github/workflows/  — CI/CD
 ```
