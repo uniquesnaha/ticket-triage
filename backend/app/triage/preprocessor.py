@@ -1,4 +1,5 @@
 """Deterministic text preprocessing — applied before the LLM sees the ticket."""
+
 from __future__ import annotations
 
 import re

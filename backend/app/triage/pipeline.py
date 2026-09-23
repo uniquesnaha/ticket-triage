@@ -1,11 +1,17 @@
 """Triage pipeline — orchestrates preprocessing → LLM → output guard → guardrails."""
+
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import Sequence
 
 import structlog
 
+from app.core.config import get_settings
 from app.core.schema import (
+    InputWarning,
+    LLMTriageOutput,
     SecurityFlag,
     TicketInput,
     TriageResult,
@@ -13,157 +19,188 @@ from app.core.schema import (
 from app.security.input_guard import RiskLevel, scan_for_injection
 from app.security.output_guard import validate_output
 from app.triage.guardrails import apply_guardrails
-from app.triage.llm import FALLBACK_RESULT, classify_ticket
+from app.triage.llm import (
+    ERROR_RESULT,
+    INJECTION_SKIPPED_RESULT,
+    MISSING_TEXT_RESULT,
+    TIMEOUT_RESULT,
+    classify_ticket,
+)
 from app.triage.preprocessor import preprocess
 
 logger = structlog.get_logger()
 
+_SCAN_FLAGS = {
+    "unicode_anomaly": SecurityFlag.UNICODE_ANOMALY,
+    "excessive_length": SecurityFlag.EXCESSIVE_LENGTH,
+}
 
-async def process_ticket(ticket: TicketInput, model_name: str) -> TriageResult:
+
+async def process_ticket(
+    ticket: TicketInput,
+    model_name: str,
+    input_warnings: Sequence[InputWarning] = (),
+) -> TriageResult:
     """
     Full triage pipeline for a single ticket.
 
-    Pipeline:
-      1. Input security scan (injection detection)
+      1. Input security scan (injection detection, unicode normalisation, length)
       2. Text preprocessing (deterministic cleaning)
-      3. LLM classification (skipped for high-risk injections)
-      4. Post-LLM output safety validation
-      5. Deterministic guardrails (rule overrides)
-      6. Assemble final TriageResult with full audit trail
+      3. LLM classification (skipped for missing text and high-risk injections)
+      4. Post-LLM output validation (leakage, forbidden content, unsupported evidence)
+      5. Deterministic guardrails (recorded as field overrides)
+      6. Assemble the final TriageResult with its provenance trail
     """
-    start_ms = time.monotonic()
+    start = time.monotonic()
+    warnings = list(input_warnings)
     security_flags: list[SecurityFlag] = []
-    is_llm_fallback = False
-
     log = logger.bind(ticket_id=ticket.ticket_id)
     log.info("pipeline_start", text_length=len(ticket.text))
 
+    missing_text = not ticket.text.strip()
+    if missing_text and InputWarning.MISSING_TEXT not in warnings:
+        warnings.append(InputWarning.MISSING_TEXT)
+
     # ── Step 1: Input security scan ───────────────────────────────────────────
-    scan = scan_for_injection(ticket.text)
-
-    if scan.security_flags:
-        for flag in scan.security_flags:
-            if flag == "unicode_anomaly":
-                security_flags.append(SecurityFlag.UNICODE_ANOMALY)
-            elif flag == "excessive_length":
-                security_flags.append(SecurityFlag.EXCESSIVE_LENGTH)
-
-    if scan.risk_level == RiskLevel.HIGH:
+    scan = scan_for_injection(ticket.text, max_length=get_settings().max_ticket_length)
+    security_flags.extend(_SCAN_FLAGS[f] for f in scan.security_flags if f in _SCAN_FLAGS)
+    injection_flagged_high = scan.risk_level == RiskLevel.HIGH
+    if injection_flagged_high:
         security_flags.append(SecurityFlag.INJECTION_ATTEMPT)
-        log.warning(
-            "injection_detected",
-            matched_patterns=scan.matched_patterns,
-            risk="HIGH",
-        )
-
-    # Use normalized text going forward
-    normalized_text = scan.normalized_text if scan.normalized_text else ticket.text
+        log.warning("injection_detected", matched_patterns=scan.matched_patterns)
 
     # ── Step 2: Preprocessing ─────────────────────────────────────────────────
-    prep = preprocess(normalized_text)
-    log.debug("preprocessing_done", transforms=prep.transforms_applied)
+    prep = preprocess(scan.normalized_text or ticket.text)
 
     # ── Step 3: LLM classification ────────────────────────────────────────────
-    injection_flagged_high = scan.risk_level == RiskLevel.HIGH
-
-    if injection_flagged_high:
-        # Do NOT send injection-flagged tickets to the LLM
-        log.warning("llm_skipped_injection", ticket_id=ticket.ticket_id)
-        llm_output = FALLBACK_RESULT
-        is_llm_fallback = True
+    model_judgment: LLMTriageOutput | None = None
+    if missing_text:
+        llm_output, is_llm_fallback = MISSING_TEXT_RESULT, True
+    elif injection_flagged_high:
+        log.warning("llm_skipped_injection")
+        llm_output, is_llm_fallback = INJECTION_SKIPPED_RESULT, True
     else:
-        llm_output, is_llm_fallback = await classify_ticket(
-            ticket_id=ticket.ticket_id,
-            cleaned_text=prep.cleaned_text,
-        )
+        llm_output, is_llm_fallback = await classify_ticket(ticket.ticket_id, prep.cleaned_text)
 
-    # ── Step 4: Post-LLM output safety validation ─────────────────────────────
-    output_scan = validate_output(llm_output.rationale)
-    if not output_scan.is_safe:
-        log.warning(
-            "output_safety_triggered",
-            issues=output_scan.issues,
-            ticket_id=ticket.ticket_id,
-        )
-        # Replace rationale with safe fallback, keep classification
-        llm_output = llm_output.model_copy(
-            update={"rationale": output_scan.sanitized_rationale}
-        )
+    # ── Step 4: Post-LLM output validation (model output only) ────────────────
+    output_flagged = False
+    if not is_llm_fallback:
+        output_scan = validate_output(llm_output.rationale, [ticket.text, prep.cleaned_text])
+        if not output_scan.is_safe:
+            output_flagged = True
+            log.warning("output_safety_triggered", issues=output_scan.issues)
+            llm_output = llm_output.model_copy(
+                update={"rationale": output_scan.sanitized_rationale}
+            )
+        model_judgment = llm_output
 
     # ── Step 5: Deterministic guardrails ──────────────────────────────────────
-    guardrail_result = apply_guardrails(
+    guard = apply_guardrails(
         llm_output=llm_output,
         cleaned_text=prep.cleaned_text,
-        is_trivial=prep.is_trivial,
+        is_trivial=prep.is_trivial and not missing_text,
         injection_flagged_high=injection_flagged_high,
+        missing_text=missing_text,
+        output_flagged=output_flagged,
     )
 
     log.info(
         "pipeline_complete",
-        category=guardrail_result.category,
-        priority=guardrail_result.priority,
-        needs_human_review=guardrail_result.needs_human_review,
-        rules_applied=guardrail_result.rules_applied,
+        category=guard.category,
+        priority=guard.priority,
+        needs_human_review=guard.needs_human_review,
+        rules_applied=guard.rules_applied,
         is_llm_fallback=is_llm_fallback,
     )
 
     # ── Step 6: Assemble result ───────────────────────────────────────────────
-    elapsed_ms = int((time.monotonic() - start_ms) * 1000)
-
     return TriageResult(
         ticket_id=ticket.ticket_id,
         original_text=ticket.text,
         cleaned_text=prep.cleaned_text,
-        category=guardrail_result.category,
-        priority=guardrail_result.priority,
-        sentiment=guardrail_result.sentiment,
-        customer_impact=guardrail_result.customer_impact,
-        needs_human_review=guardrail_result.needs_human_review,
-        rationale=guardrail_result.rationale,
+        category=guard.category,
+        priority=guard.priority,
+        sentiment=guard.sentiment,
+        customer_impact=guard.customer_impact,
+        needs_human_review=guard.needs_human_review,
+        rationale=llm_output.rationale,
+        model_judgment=model_judgment,
+        field_overrides=guard.overrides,
+        guardrails_applied=guard.rules_applied,
         preprocessing_applied=prep.transforms_applied,
-        guardrails_applied=guardrail_result.rules_applied,
         security_flags=security_flags,
+        input_warnings=warnings,
         llm_model=model_name,
         is_llm_fallback=is_llm_fallback,
-        processing_time_ms=elapsed_ms,
+        processing_time_ms=int((time.monotonic() - start) * 1000),
     )
 
 
-async def process_batch(tickets: list[TicketInput], model_name: str) -> list[TriageResult]:
-    """
-    Process a batch of tickets.
-    Each ticket is processed independently — one failure does not block others.
-    """
-    import asyncio
+def _safe_default(
+    ticket: TicketInput,
+    model_name: str,
+    baseline: LLMTriageOutput,
+    warnings: Sequence[InputWarning],
+) -> TriageResult:
+    """Result for a ticket whose pipeline run did not complete."""
+    return TriageResult(
+        ticket_id=ticket.ticket_id,
+        original_text=ticket.text,
+        cleaned_text=ticket.text,
+        category=baseline.category,
+        priority=baseline.priority,
+        sentiment=baseline.sentiment,
+        customer_impact=baseline.customer_impact,
+        needs_human_review=True,
+        rationale=baseline.rationale,
+        input_warnings=list(warnings),
+        llm_model=model_name,
+        is_llm_fallback=True,
+    )
 
-    tasks = [process_ticket(ticket, model_name) for ticket in tickets]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    final: list[TriageResult] = []
-    for ticket, result in zip(tickets, results, strict=True):
-        if isinstance(result, Exception):
+async def process_batch(
+    tickets: Sequence[TicketInput],
+    model_name: str,
+    input_warnings: Sequence[Sequence[InputWarning]] | None = None,
+    timeout: float | None = None,
+) -> list[TriageResult]:
+    """
+    Process a batch of tickets concurrently (bounded by LLM_CONCURRENCY).
+
+    Each ticket is independent: an error or a blown time budget on one ticket yields a
+    safe needs-human-review result for that ticket, and results keep input order.
+    """
+    settings = get_settings()
+    warnings = input_warnings or [() for _ in tickets]
+    semaphore = asyncio.Semaphore(settings.llm_concurrency)
+
+    async def run(ticket: TicketInput, ticket_warnings: Sequence[InputWarning]) -> TriageResult:
+        async with semaphore:
+            return await process_ticket(ticket, model_name, ticket_warnings)
+
+    tasks = [asyncio.create_task(run(t, w)) for t, w in zip(tickets, warnings, strict=True)]
+    if not tasks:
+        return []
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    if pending:
+        logger.warning("batch_timeout", unfinished=len(pending), timeout_s=timeout)
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    results: list[TriageResult] = []
+    for ticket, ticket_warnings, task in zip(tickets, warnings, tasks, strict=True):
+        if task.cancelled():
+            results.append(_safe_default(ticket, model_name, TIMEOUT_RESULT, ticket_warnings))
+        elif (exc := task.exception()) is not None:
             logger.error(
                 "ticket_processing_error",
                 ticket_id=ticket.ticket_id,
-                error=str(result)[:200],
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
             )
-            # Emit a safe fallback result so the batch still completes
-            final.append(
-                TriageResult(
-                    ticket_id=ticket.ticket_id,
-                    original_text=ticket.text,
-                    cleaned_text=ticket.text,
-                    category=FALLBACK_RESULT.category,
-                    priority=FALLBACK_RESULT.priority,
-                    sentiment=FALLBACK_RESULT.sentiment,
-                    customer_impact=FALLBACK_RESULT.customer_impact,
-                    needs_human_review=True,
-                    rationale=f"Processing error — manual review required. [PIPELINE_ERROR]",
-                    is_llm_fallback=True,
-                    llm_model=model_name,
-                )
-            )
+            results.append(_safe_default(ticket, model_name, ERROR_RESULT, ticket_warnings))
         else:
-            final.append(result)  # type: ignore[arg-type]
-
-    return final
+            results.append(task.result())
+    return results

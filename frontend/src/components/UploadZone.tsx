@@ -21,7 +21,7 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
     onDrop,
     accept: { 'text/csv': ['.csv'], 'text/plain': ['.csv'] },
     maxFiles: 1,
-    maxSize: 5 * 1024 * 1024, // 5MB
+    maxSize: 4 * 1024 * 1024, // matches the API limit (Vercel caps bodies at 4.5 MB)
     disabled,
   })
 
@@ -69,7 +69,7 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
           <div className="upload-requirements">
             <span>Required columns: <code>ticket_id</code>, <code>text</code></span>
             <span>·</span>
-            <span>Max 50 tickets · Max 5 MB</span>
+            <span>Max 50 tickets · Max 4 MB</span>
           </div>
         </div>
       </div>

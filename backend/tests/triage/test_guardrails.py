@@ -1,7 +1,6 @@
 """Tests for the deterministic guardrail engine."""
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from app.core.schema import (
     Category,
@@ -46,7 +45,9 @@ class TestOutageCritical:
 class TestSecurityReview:
     def test_account_accessed_triggers_security(self) -> None:
         llm = make_llm_output(category=Category.BUG)
-        result = apply_guardrails(llm, "We think someone may have accessed our account. Please advise.")
+        result = apply_guardrails(
+            llm, "We think someone may have accessed our account. Please advise."
+        )
         assert result.category == Category.SECURITY
         assert result.needs_human_review is True
         assert result.priority == Priority.HIGH

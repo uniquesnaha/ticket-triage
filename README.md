@@ -1,275 +1,247 @@
-# Ticket Triage AI 🎫
+# Ticket Triage
 
-> **Production-grade AI-powered support ticket triage** — FastAPI + LangChain + Groq (OpenAI-compatible LPU inference), with a React dashboard and multi-layer prompt injection defenses.
+Support-ticket triage with **schema-enforced LLM output** and **deterministic guardrails**.
+Each ticket in a CSV becomes one JSON object with `category`, `priority`, `sentiment`,
+`customer_impact`, `needs_human_review`, and a `rationale` grounded in the ticket text,
+plus a provenance trail showing exactly what the model decided and what rules changed.
 
-[![CI](https://github.com/your-org/ticket-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/ticket-triage/actions)
+- **CLI** — `python -m app.cli data/project_1.csv` → JSON Lines, one object per input row
+- **API** — FastAPI (`/api/v1/triage`, `/api/v1/triage/upload`)
+- **UI** — React dashboard (upload CSV → results table → per-ticket audit drawer)
+- **Deploy** — one Vercel project: static frontend + Python serverless function
 
----
-
-## What It Does
-
-Reads support tickets from a CSV file and returns a structured triage result for each:
-
-| Field | Source | Description |
-|---|---|---|
-| `category` | LLM | billing, auth, outage, bug, security, shipping, feature_request, spam, unknown |
-| `priority` | LLM + Guardrails | critical, high, medium, low |
-| `sentiment` | LLM + Guardrails | urgent, negative, neutral, positive |
-| `customer_impact` | LLM + Guardrails | all_customers, multiple_customers, single_customer, none |
-| `needs_human_review` | LLM + Guardrails | boolean — true if human oversight required |
-| `rationale` | LLM | 1-3 sentences citing evidence from the ticket text |
-| `preprocessing_applied` | Deterministic | Transforms applied before LLM (audit trail) |
-| `guardrails_applied` | Deterministic | Rule overrides applied after LLM (audit trail) |
-| `security_flags` | Deterministic | Injection attempts, unicode anomalies detected |
+The original assignment is in [docs/guidelines.md](docs/guidelines.md); the input data is
+[data/project_1.csv](data/project_1.csv).
 
 ---
 
-## Architecture
+## How a ticket is processed
 
 ```
-CSV Upload
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│  FastAPI Backend                                      │
-│                                                       │
-│  CORS → TrustedHost → SecurityHeaders → RequestID    │
-│  → RateLimit (slowapi) → X-API-Key auth              │
-│                │                                      │
-│  ┌─────────────▼────────────────────────────────┐   │
-│  │ Triage Pipeline                               │   │
-│  │                                               │   │
-│  │  1. Input Security Scan                       │   │
-│  │     - Injection pattern detection (27 regex)  │   │
-│  │     - Unicode normalization (NFKC + homoglyphs│   │
-│  │     - Length enforcement                      │   │
-│  │                                               │   │
-│  │  2. Text Preprocessor (deterministic)         │   │
-│  │     - Dedup repeated fragments                │   │
-│  │     - Strip device/email signatures           │   │
-│  │     - Normalize ALL-CAPS sentences            │   │
-│  │     - Flag trivial tickets                    │   │
-│  │                                               │   │
-│  │  3. LangChain + Groq (OpenAI-compatible)      │   │
-│  │     - Sentinel delimiters in system prompt    │   │
-│  │     - with_structured_output() (schema lock)  │   │
-│  │     - tenacity retry (3x, exponential)        │   │
-│  │     - Safe fallback on failure                │   │
-│  │     [SKIPPED for high-risk injection tickets] │   │
-│  │                                               │   │
-│  │  4. Post-LLM Output Safety Scan               │   │
-│  │     - Prompt leakage detection                │   │
-│  │     - Hallucination pattern check             │   │
-│  │     - Forbidden content filter                │   │
-│  │                                               │   │
-│  │  5. Deterministic Guardrail Engine            │   │
-│  │     - 7 named rules override LLM output       │   │
-│  │     - Each rule recorded in audit trail       │   │
-│  └───────────────────────────────────────────────┘   │
-│                │                                      │
-│  TriageResult JSON (with full audit trail)            │
-│  └─────────────────────────────────────────────────────┘
-    │
-    ▼
-React Dashboard (Upload → Processing → Results Table → Detail Drawer)
+CSV row
+  │  csv_loader     missing ticket_id → ROW-n, missing text / duplicates / over-length → input_warnings
+  ▼
+input_guard         NFKC + homoglyph normalisation, prompt-injection patterns (high risk → skip LLM)
+  ▼
+preprocessor        strip device signatures & sign-offs, dedupe repeated fragments,
+  │                 normalise ALL-CAPS, collapse whitespace, flag trivial tickets
+  ▼
+LLM (LangChain → Groq, OpenAI-compatible)
+  │                 tool-calling bound to a Pydantic schema (LLMTriageOutput)
+  │                 retries: malformed/invalid output, 429 (honours Retry-After), 5xx, timeouts
+  │                 after MAX_RETRIES → deterministic safe fallback (needs_human_review = true)
+  ▼
+output_guard        rationale must not leak the prompt, contain forbidden content, or cite
+  │                 quotes/numbers that are not in the ticket → otherwise withheld + escalated
+  ▼
+guardrails          named rules override fields when the ticket contains explicit evidence
+  ▼
+TriageResult        final fields + model_judgment + field_overrides + audit lists
 ```
 
----
+### Model judgment vs deterministic rules
 
-## Quick Start (Docker Compose — Local Dev)
+The two are never blended silently:
 
-### 1. Prerequisites
-- Docker + Docker Compose (or Python 3.12 + Node 20)
-- Groq API key (free in 30 seconds at [console.groq.com/keys](https://console.groq.com/keys))
-
-### 2. Configure environment
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and fill in:
-```env
-GROQ_API_KEY=gsk_your-free-groq-key-here
-GROQ_BASE_URL=https://api.groq.com/openai/v1
-MODEL_NAME=llama-3.3-70b-versatile
-TRIAGE_API_KEY=your-secret-key  # generate: python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-### 3. Start both services
-```bash
-docker-compose up --build
-```
-
-| Service | URL |
+| Field | Meaning |
 |---|---|
-| **React UI** | http://localhost:5173 |
-| **FastAPI** | http://localhost:8000 |
-| **API Docs** | http://localhost:8000/api/v1/docs |
+| `model_judgment` | The validated model output *before* rules (`null` if the model was not used). |
+| `field_overrides` | Every field a rule changed: `{field, model_value, final_value, rule}`. |
+| `guardrails_applied` | Every rule that matched, including ones that agreed with the model. |
+| `rationale` | The model's rationale (never edited by rules). If the model was not used, or its rationale failed validation, a system message says why. |
+| `is_llm_fallback` | `true` when the result is a deterministic safe default, not a model judgment. |
+| `preprocessing_applied`, `security_flags`, `input_warnings` | What was cleaned, detected, or missing. |
 
-### 4. Upload tickets
-Open the UI, drag and drop `project_1.csv`, and watch the triage run.
+Guardrail rules (see [backend/app/triage/guardrails.py](backend/app/triage/guardrails.py)):
 
----
+| Rule | Trigger | Effect |
+|---|---|---|
+| `OUTAGE_CRITICAL` | "production is down", "every customer", … | priority → critical, impact → all_customers, review |
+| `SECURITY_REVIEW` | "may have accessed", "unauthorized access", … | category → security, priority → high, review |
+| `PAYMENT_ANOMALY` | "charged twice", "payment failed", … | category → billing, review |
+| `NOT_URGENT` | "not urgent", "no rush", … | priority capped at medium |
+| `POSITIVE_SENTIMENT_GUARD` | "love the", "awesome", … | negative/urgent sentiment → positive |
+| `TRIVIAL_TICKET` | ≤ 2 words and no evidence rule fired | category → unknown, priority → low, review |
+| `INJECTION_FLAGGED` | high-risk injection pattern (LLM skipped) | category → security, priority → high, review |
+| `MISSING_TEXT` | blank ticket text (LLM skipped) | unknown / low / none, review |
+| `OUTPUT_SAFETY_REVIEW` | model rationale failed validation | review |
 
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `GROQ_API_KEY` | ✅ | — | Groq API key (free at console.groq.com/keys) |
-| `GROQ_BASE_URL` | — | `https://api.groq.com/openai/v1` | Groq OpenAI-compatible base URL |
-| `MODEL_NAME` | — | `llama-3.3-70b-versatile` | Model ID (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`) |
-| `TRIAGE_API_KEY` | ✅ | — | API key protecting triage endpoints |
-| `ENVIRONMENT` | — | `development` | `development` or `production` |
-| `LOG_LEVEL` | — | `INFO` | Logging level |
-| `ALLOWED_ORIGINS` | — | `http://localhost:5173` | CORS origin allowlist (comma-separated) |
-| `ALLOWED_HOSTS` | — | `localhost,127.0.0.1` | Trusted host allowlist |
-| `MAX_TICKETS_PER_BATCH` | — | `50` | Maximum tickets per request |
-| `MAX_TICKET_LENGTH` | — | `2000` | Max characters per ticket text |
-| `TEMPERATURE` | — | `0.1` | LLM temperature (low = deterministic) |
-| `MAX_RETRIES` | — | `3` | LLM retry attempts |
+Rules may only *escalate* `needs_human_review`, never clear it.
 
 ---
 
-## API Reference
+## Quick start (local)
 
-All endpoints are at `/api/v1/`. Auth: `X-API-Key: <your-key>` header.
+Prerequisites: Python 3.12, Node 20+, a free Groq API key from <https://console.groq.com/keys>.
 
-### `POST /api/v1/triage`
-Triage a batch of tickets (JSON).
-
-```json
-// Request
-{
-  "tickets": [
-    { "ticket_id": "T001", "text": "I was charged twice for order 8841." }
-  ]
-}
-
-// Response
-{
-  "results": [{ "ticket_id": "T001", "category": "billing", "priority": "high", ... }],
-  "total": 1,
-  "needs_human_review_count": 1,
-  "by_category": { "billing": 1 },
-  "by_priority": { "high": 1 },
-  "model": "grok-beta",
-  "processing_time_ms": 1240
-}
+```bash
+cp .env.example .env          # set GROQ_API_KEY and TRIAGE_API_KEY
 ```
 
-### `POST /api/v1/triage/upload`
-Upload a CSV file. Columns required: `ticket_id`, `text`.
-
-### `GET /api/v1/health`
-Public health check. Returns service status and model info.
-
----
-
-## Running Tests
+### CLI — the assignment deliverable
 
 ```bash
 cd backend
-pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
 
-# All tests
-pytest tests/ -v
-
-# Security tests only
-pytest tests/security/ -v
-
-# With coverage
-pytest tests/ --cov=app --cov-report=term-missing
+python -m app.cli ../data/project_1.csv                      # JSONL to stdout
+python -m app.cli ../data/project_1.csv -o results.jsonl     # to a file
+python -m app.cli ../data/project_1.csv --format json        # single JSON array
 ```
 
----
+Logs go to stderr, so stdout is always valid JSON Lines. Exit code `2` means the input
+file is unreadable or not a ticket CSV.
 
-## Production Deployment (100% Free on Vercel)
+### API + UI
 
-The entire fullstack application (FastAPI backend serverless functions + React frontend) deploys directly to **[Vercel](https://vercel.com)** under a single domain.
-
-### 1. Push to GitHub
 ```bash
-git add .
-git commit -m "feat: complete ticket triage production application for vercel"
-git push -u origin main
+# terminal 1
+cd backend && uvicorn app.main:app --reload            # http://localhost:8000/api/v1/docs
+
+# terminal 2
+cd frontend && npm ci && npm run dev                   # http://localhost:5173
 ```
 
-### 2. Deploy on Vercel
-1. Go to **[vercel.com](https://vercel.com)** and sign in.
-2. Click **"Add New Project"** and import your repository.
-3. In **Environment Variables**, add:
-   - `GROQ_API_KEY`: *(your `gsk_...` key)*
-   - `GROQ_BASE_URL`: `https://api.groq.com/openai/v1`
-   - `MODEL_NAME`: `openai/gpt-oss-120b`
-   - `TRIAGE_API_KEY`: `your-secret-triage-api-key-here`
-   - `VITE_API_KEY`: `your-secret-triage-api-key-here`
-4. Click **Deploy**.
-
-Vercel automatically builds the Vite frontend, runs the FastAPI backend on serverless Python, and serves both under your production URL (e.g. `https://ticket-triage.vercel.app`).
+Enter your `TRIAGE_API_KEY` in the UI when prompted. Or run both with
+`docker compose up --build`.
 
 ---
 
-## Security Design
+## Deploying to Vercel
 
-### Prompt Injection Defenses (5 Layers)
+The repo is a single Vercel project: `vercel.json` builds `frontend/` to static files and
+deploys `api/index.py` (which imports `backend/app`) as a Python serverless function.
+`/api/*` is routed to the function and everything else to the SPA.
 
-1. **Pre-LLM regex scanner** — 27 injection patterns detected. High-risk tickets never reach the LLM.
-2. **Unicode normalization** — NFKC normalization neutralizes homoglyph attacks.
-3. **Sentinel delimiters** — User content wrapped in `<<<TICKET_START>>>...<<<TICKET_END>>>` in system prompt.
-4. **Structured output schema** — LLM constrained to JSON fields via function calling. Cannot produce free-form instructions.
-5. **Post-LLM output scan** — Rationale checked for prompt leakage, hallucinations, and forbidden content.
+1. **Push to GitHub** (or GitLab/Bitbucket).
+2. **Import the repo** at <https://vercel.com/new>. Leave *Root Directory* as the repo root
+   and *Framework Preset* as **Other**. `vercel.json` already defines the install, build,
+   and output settings, so don't override them.
+3. **Add environment variables** (Project → Settings → Environment Variables, for
+   *Production* and *Preview*):
 
-### Other Security Controls
+   | Name | Value |
+   |---|---|
+   | `GROQ_API_KEY` | your `gsk_…` key |
+   | `TRIAGE_API_KEY` | a long random string: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+   | `ENVIRONMENT` | `production` |
+   | `MODEL_NAME` | *(optional)* default `openai/gpt-oss-120b` |
+   | `ALLOWED_HOSTS` | *(only for a custom domain)* e.g. `triage.example.com` |
 
-- **`X-API-Key` auth** — timing-safe `hmac.compare_digest` comparison
-- **Rate limiting** — 30 req/min (triage), 5 req/min (upload) per IP via slowapi
-- **CORS** — explicit origin allowlist, no wildcard
-- **TrustedHostMiddleware** — prevents Host header attacks
-- **Input validation** — max 50 tickets, 2000 chars each, 5MB file max
-- **Security headers** — `X-Frame-Options`, `X-Content-Type-Options`, `CSP`, `Referrer-Policy`
-- **No hardcoded secrets** — all credentials via environment variables
-- **PII-safe logging** — ticket text truncated in logs, no credentials ever logged
-- **API docs disabled in production**
+   Do **not** create any `VITE_*` secret: the frontend bundle is public, so the access key is
+   entered by users at runtime instead.
+4. **Deploy.** When it finishes, open `https://<project>.vercel.app/api/v1/health` and
+   check that it shows `"status": "ok"` and `"llm_configured": true`.
+5. Open the site, enter the `TRIAGE_API_KEY`, and upload `data/project_1.csv`.
 
----
+Vercel-specific notes:
 
-## Design Decisions
-
-### LLM vs. Deterministic Rules
-
-The system clearly separates **model judgment** from **deterministic rules**:
-
-- **LLM** handles nuanced classification that requires language understanding (category inference, sentiment, rationale generation)
-- **Guardrails** enforce explicit evidence — if a ticket says "Production is down for every customer", we **know** it's CRITICAL regardless of what the LLM says
-- Every overridden field is tracked in `guardrails_applied` so evaluators can see exactly what changed
-
-### Why Low Temperature (0.1)?
-
-Classification tasks benefit from determinism. With temperature=0.1, the model picks the most confident answer rather than sampling from the distribution.
-
-### Why tenacity with exponential backoff?
-
-Groq API calls can fail transiently (rate limits, network hiccups). Rather than immediately returning an error, we retry up to 3 times with increasing waits (2s → 4s → 8s). If all retries fail, we return a safe fallback result with `needs_human_review=True` — the batch still completes, just that ticket gets flagged.
+- The function's `maxDuration` is 60 s (`vercel.json`), and `BATCH_TIMEOUT` (50 s) keeps the
+  API under that: tickets still unfinished at the deadline come back as needs-review fallbacks
+  instead of the request failing with a 504.
+- Vercel limits request bodies to 4.5 MB, so `MAX_CSV_SIZE_MB` defaults to 4.
+- Hosts are validated. The deployment's own `*.vercel.app` URLs are trusted automatically
+  (via Vercel's system env vars); list custom domains in `ALLOWED_HOSTS`.
+- Changing an environment variable only takes effect after a **redeploy**.
 
 ---
 
-## Project Structure
+## Configuration
+
+All settings are environment variables (see [.env.example](.env.example)). The main ones:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GROQ_API_KEY` | — | Required for real classification; without it `/health` reports `degraded`. |
+| `TRIAGE_API_KEY` | — | Required, ≥ 16 chars. Sent by clients as `X-API-Key`. |
+| `MODEL_NAME` | `openai/gpt-oss-120b` | Any Groq model with tool calling. |
+| `LLM_REASONING_EFFORT` | auto | `low` for gpt-oss models; `none` to disable. |
+| `MAX_RETRIES` | `4` | Total LLM attempts per ticket. |
+| `LLM_CONCURRENCY` | `4` | Parallel LLM calls per batch. |
+| `BATCH_TIMEOUT` | `50` | Seconds (API only; the CLI waits for every ticket). |
+| `MAX_TICKETS_PER_BATCH` | `50` | API limit per request. |
+| `ENVIRONMENT` | `development` | `production` = JSON logs, API docs disabled. |
+
+---
+
+## API
+
+All endpoints are under `/api/v1`. Triage endpoints require `X-API-Key`. Errors use RFC 7807
+`application/problem+json`.
+
+| Method | Path | Body |
+|---|---|---|
+| `GET` | `/health` | — (public) |
+| `POST` | `/triage` | `{"tickets": [{"ticket_id": "T001", "text": "…"}]}` |
+| `POST` | `/triage/upload` | multipart `file` = CSV with `ticket_id,text` columns |
+
+Both triage endpoints return `{results: TriageResult[], total, needs_human_review_count,
+by_category, by_priority, model, processing_time_ms}`, with results in input order.
+
+---
+
+## Development
+
+```bash
+cd backend
+ruff check app tests && ruff format --check app tests
+mypy app                       # strict
+pytest --cov=app
+
+cd ../frontend
+npm run lint && npm run build
+```
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all of the above on every
+push and PR. Tests never call the real LLM.
+
+### Project structure
 
 ```
-ticket-triage/
-├── backend/app/
-│   ├── core/           — Config, schemas, exceptions, logging
-│   ├── security/       — Injection scanner, output validator, auth
-│   ├── triage/         — Preprocessor, LLM chain, guardrails, pipeline
-│   ├── api/v1/         — FastAPI routes
-│   └── middleware/     — Request ID, security headers
-├── frontend/src/
-│   ├── components/     — UI components
-│   ├── hooks/          — useTriage state machine
-│   ├── api/            — Axios client
-│   └── types/          — TypeScript types
-├── tests/              — pytest test suite
-├── api/index.py        — Vercel Serverless Function entrypoint
-├── vercel.json         — Vercel Fullstack routing configuration
-└── .github/workflows/  — CI/CD
+├── api/index.py              Vercel serverless entrypoint (imports backend/app)
+├── backend/
+│   ├── app/
+│   │   ├── cli.py            CSV → JSONL command-line tool
+│   │   ├── main.py           FastAPI app factory
+│   │   ├── api/v1/           HTTP routes
+│   │   ├── core/             config, schemas, errors, logging, rate limiting
+│   │   ├── middleware/       request ID, security headers
+│   │   ├── security/         auth, input (injection) guard, output (rationale) guard
+│   │   └── triage/           csv_loader, preprocessor, llm, guardrails, pipeline
+│   ├── tests/
+│   ├── requirements.txt      runtime deps (also used by Vercel via ../requirements.txt)
+│   ├── requirements-dev.txt
+│   └── Dockerfile            production image for non-Vercel hosting
+├── frontend/                 React + Vite + TypeScript
+├── data/project_1.csv        assignment input
+├── docs/guidelines.md        assignment brief
+├── requirements.txt          Vercel's Python install hook (→ backend/requirements.txt)
+└── vercel.json
 ```
+
+---
+
+## Security
+
+- **No secrets in code or the bundle.** Credentials come only from the environment; the UI
+  asks for the access key and keeps it in `sessionStorage` for that tab.
+- **Auth:** shared API key, compared in constant time.
+- **Prompt injection:** pattern scan before the LLM (high-risk tickets never reach it),
+  sentinel-delimited untrusted input, schema-bound tool output, post-LLM rationale checks.
+- **HTTP:** trusted-host allowlist, strict CORS, CSP and security headers on API and static
+  responses, request IDs validated before being echoed.
+- **Limits:** batch size, text length, upload size, and per-IP rate limits.
+- **Logging:** structured JSON in production; ticket text and error payloads are truncated.
+- **CSV export** in the UI neutralises spreadsheet formula injection.
+
+## Known limitations
+
+- **Groq free-tier limits.** `openai/gpt-oss-120b` has a low tokens-per-minute quota on the
+  free tier, so a 10-ticket batch can hit 429s. The client honours `Retry-After`, and
+  tickets that still fail fall back to needs-review. For steady throughput, use a paid Groq
+  tier or lower `LLM_CONCURRENCY`.
+- **Rate limits are per instance** (in memory). On serverless each warm instance counts
+  separately; use a Redis-backed limiter for a global quota.
+- **One shared access key.** Fine for an internal tool; put real user auth (SSO/OAuth)
+  in front of it before exposing it more widely.

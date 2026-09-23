@@ -1,4 +1,5 @@
 """Post-LLM output safety validator."""
+
 from __future__ import annotations
 
 import re
@@ -42,9 +43,16 @@ FORBIDDEN_PATTERNS = [
     r"javascript:",
 ]
 
+# Quoted evidence ("...", “...”) — every quote must exist in the ticket text.
+_QUOTE = re.compile(r'"([^"]{3,})"|“([^”]{3,})”')
+# Identifiers/amounts (2+ digits) — the model must not invent order numbers, sums, dates.
+_NUMBER = re.compile(r"\d[\d,.]*\d")
+
 _LEAKAGE = [re.compile(p, re.IGNORECASE) for p in LEAKAGE_PATTERNS]
 _HALLUCINATION = [re.compile(p, re.IGNORECASE) for p in HALLUCINATION_PATTERNS]
 _FORBIDDEN = [re.compile(p, re.IGNORECASE) for p in FORBIDDEN_PATTERNS]
+
+MAX_RATIONALE_LENGTH = 400
 
 SAFE_FALLBACK_RATIONALE = (
     "Ticket classified by automated system. Rationale was flagged during safety review "
@@ -52,12 +60,31 @@ SAFE_FALLBACK_RATIONALE = (
 )
 
 
-def validate_output(rationale: str) -> OutputScanResult:
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def find_unsupported_evidence(rationale: str, source_texts: list[str]) -> list[str]:
+    """Return quoted phrases or numbers in the rationale that no source text contains."""
+    haystack = "\n".join(_normalize(t) for t in source_texts)
+    unsupported: list[str] = []
+    for match in _QUOTE.finditer(rationale):
+        quote = _normalize(match.group(1) or match.group(2)).strip(" .,!?;:")
+        if quote and quote not in haystack:
+            unsupported.append(quote)
+    for number in _NUMBER.findall(rationale):
+        if number not in haystack:
+            unsupported.append(number)
+    return unsupported
+
+
+def validate_output(rationale: str, source_texts: list[str] | None = None) -> OutputScanResult:
     """
     Validate the LLM-generated rationale for:
     1. Prompt leakage (system prompt fragments)
-    2. Hallucinated claims
+    2. Hallucinated claims (known patterns)
     3. Forbidden content (injected code, XSS, etc.)
+    4. Unsupported evidence — quotes or numbers absent from the ticket (when sources given)
     """
     issues: list[str] = []
 
@@ -76,10 +103,12 @@ def validate_output(rationale: str) -> OutputScanResult:
             issues.append("forbidden_content_detected")
             break
 
+    if source_texts is not None and find_unsupported_evidence(rationale, source_texts):
+        issues.append("unsupported_evidence")
+
     # Length sanity check
-    if len(rationale) > 300:
+    if len(rationale) > MAX_RATIONALE_LENGTH:
         issues.append("rationale_too_long")
-        rationale = rationale[:297] + "..."
 
     if issues:
         return OutputScanResult(

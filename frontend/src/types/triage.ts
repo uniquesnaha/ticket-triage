@@ -23,6 +23,28 @@ export type CustomerImpact =
 
 export type SecurityFlag = 'injection_attempt' | 'excessive_length' | 'unicode_anomaly'
 
+export type InputWarning =
+  | 'missing_ticket_id'
+  | 'missing_text'
+  | 'duplicate_ticket_id'
+  | 'text_truncated'
+
+export interface ModelJudgment {
+  category: Category
+  priority: Priority
+  sentiment: Sentiment
+  customer_impact: CustomerImpact
+  needs_human_review: boolean
+  rationale: string
+}
+
+export interface FieldOverride {
+  field: string
+  model_value: string | boolean
+  final_value: string | boolean
+  rule: string
+}
+
 export interface TicketInput {
   ticket_id: string
   text: string
@@ -38,9 +60,12 @@ export interface TriageResult {
   customer_impact: CustomerImpact
   needs_human_review: boolean
   rationale: string
-  preprocessing_applied: string[]
+  model_judgment: ModelJudgment | null
+  field_overrides: FieldOverride[]
   guardrails_applied: string[]
+  preprocessing_applied: string[]
   security_flags: SecurityFlag[]
+  input_warnings: InputWarning[]
   llm_model: string
   is_llm_fallback: boolean
   processing_time_ms: number

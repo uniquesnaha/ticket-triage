@@ -494,3 +494,31 @@ body {
 ::-webkit-scrollbar-track { background: var(--bg-base); }
 ::-webkit-scrollbar-thumb { background: var(--bg-surface-3); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent-indigo); }
+
+/* ─── Access Key ────────────────────────────────────────────────── */
+.access-key-form {
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+}
+.access-key-label {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.6rem;
+}
+.access-key-row { display: flex; gap: 0.5rem; }
+.access-key-input {
+  flex: 1; min-width: 0;
+  background: var(--bg-surface-2); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 0.6rem 0.8rem; font: inherit; font-size: 0.9rem;
+}
+.access-key-input:focus { outline: none; border-color: var(--accent-indigo); }
+.access-key-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.6rem; }
+.link-button {
+  background: none; border: none; padding: 0; font: inherit;
+  color: var(--accent-indigo); text-decoration: underline; cursor: pointer;
+}
+.audit-override { font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.3rem; }
+.audit-override code { color: var(--accent-cyan); }

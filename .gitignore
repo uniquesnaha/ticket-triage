@@ -1,8 +1,9 @@
 # Environments & Secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 *.env
+.vercel
 
 # Python
 __pycache__/
@@ -43,6 +44,8 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+.mypy_cache/
+.ruff_cache/
 
 # Node & Frontend
 node_modules/
@@ -51,6 +54,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+frontend/dist/
 frontend/dist-ssr/
 *.local
 

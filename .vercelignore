@@ -1,0 +1,13 @@
+# Keep local-only files out of CLI deploys (`vercel` / `vercel --prod`).
+.env
+.env.*
+!.env.example
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/venv
+frontend/dist
+coverage.xml

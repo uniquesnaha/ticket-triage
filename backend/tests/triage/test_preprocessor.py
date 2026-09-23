@@ -1,14 +1,11 @@
 """Tests for the text preprocessor."""
+
 from __future__ import annotations
 
-import pytest
-
 from app.triage.preprocessor import (
-    collapse_whitespace,
     deduplicate_fragments,
     flag_trivial,
     normalize_capitalization,
-    normalize_unicode,
     preprocess,
     strip_device_signatures,
     strip_email_closings,

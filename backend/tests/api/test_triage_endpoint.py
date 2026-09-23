@@ -1,4 +1,5 @@
 """API endpoint tests."""
+
 from __future__ import annotations
 
 import csv
@@ -33,7 +34,9 @@ def mock_llm():
 
 class TestAuth:
     def test_no_api_key_returns_401(self, client: TestClient) -> None:
-        resp = client.post("/api/v1/triage", json={"tickets": [{"ticket_id": "T1", "text": "test"}]})
+        resp = client.post(
+            "/api/v1/triage", json={"tickets": [{"ticket_id": "T1", "text": "test"}]}
+        )
         assert resp.status_code == 401
 
     def test_wrong_api_key_returns_401(self, client: TestClient) -> None:
@@ -44,7 +47,9 @@ class TestAuth:
         )
         assert resp.status_code == 401
 
-    def test_correct_api_key_accepted(self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock) -> None:
+    def test_correct_api_key_accepted(
+        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
+    ) -> None:
         resp = client.post(
             "/api/v1/triage",
             json={"tickets": [{"ticket_id": "T1", "text": "My payment failed."}]},
@@ -54,7 +59,9 @@ class TestAuth:
 
 
 class TestTriageJSON:
-    def test_returns_correct_structure(self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock) -> None:
+    def test_returns_correct_structure(
+        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
+    ) -> None:
         resp = client.post(
             "/api/v1/triage",
             json={"tickets": [{"ticket_id": "T001", "text": "I was charged twice."}]},
@@ -73,7 +80,9 @@ class TestTriageJSON:
         assert "preprocessing_applied" in result
         assert "guardrails_applied" in result
 
-    def test_request_id_in_response(self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock) -> None:
+    def test_request_id_in_response(
+        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
+    ) -> None:
         resp = client.post(
             "/api/v1/triage",
             json={"tickets": [{"ticket_id": "T1", "text": "test ticket"}]},
@@ -107,7 +116,9 @@ class TestCSVUpload:
         writer.writerows(rows)
         return buf.getvalue().encode()
 
-    def test_valid_csv_upload(self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock) -> None:
+    def test_valid_csv_upload(
+        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
+    ) -> None:
         csv_data = self.make_csv([{"ticket_id": "T001", "text": "My login is broken."}])
         resp = client.post(
             "/api/v1/triage/upload",
@@ -134,3 +145,52 @@ class TestCSVUpload:
             headers=auth_headers,
         )
         assert resp.status_code == 400
+
+    def test_missing_text_row_still_produces_result(
+        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
+    ) -> None:
+        csv_data = b"ticket_id,text\nT1,My login is broken.\nT2,\n"
+        resp = client.post(
+            "/api/v1/triage/upload",
+            files={"file": ("test.csv", csv_data, "text/csv")},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert [r["ticket_id"] for r in results] == ["T1", "T2"]
+        assert results[1]["needs_human_review"] is True
+        assert results[1]["input_warnings"] == ["missing_text"]
+        assert mock_llm.call_count == 1  # blank row never reaches the model
+
+    def test_oversized_file_rejected(self, client: TestClient, auth_headers: dict) -> None:
+        big = b"ticket_id,text\n" + b"T1," + b"x" * (4 * 1024 * 1024 + 10) + b"\n"
+        resp = client.post(
+            "/api/v1/triage/upload",
+            files={"file": ("big.csv", big, "text/csv")},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 413
+        assert resp.headers["content-type"] == "application/problem+json"
+
+    def test_wrong_file_type_rejected(self, client: TestClient, auth_headers: dict) -> None:
+        resp = client.post(
+            "/api/v1/triage/upload",
+            files={"file": ("x.png", b"\x89PNG", "image/png")},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestSecurityHeaders:
+    def test_api_responses_carry_security_headers(self, client: TestClient) -> None:
+        resp = client.get("/api/v1/health")
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert "default-src 'none'" in resp.headers["content-security-policy"]
+
+    def test_untrusted_host_rejected(self, client: TestClient) -> None:
+        resp = client.get("/api/v1/health", headers={"Host": "evil.example.com"})
+        assert resp.status_code == 400
+
+    def test_malformed_request_id_is_replaced(self, client: TestClient) -> None:
+        resp = client.get("/api/v1/health", headers={"X-Request-ID": "bad id\r\ninjected"})
+        assert resp.headers["x-request-id"] != "bad id\r\ninjected"

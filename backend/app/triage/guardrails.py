@@ -1,16 +1,17 @@
 """Deterministic guardrails — override LLM output based on explicit text evidence."""
+
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.core.schema import (
+    PRIORITY_ORDER,
     Category,
     CustomerImpact,
+    FieldOverride,
     LLMTriageOutput,
-    PRIORITY_ORDER,
     Priority,
-    SecurityFlag,
     Sentiment,
 )
 
@@ -24,8 +25,8 @@ class GuardrailResult:
     sentiment: Sentiment
     customer_impact: CustomerImpact
     needs_human_review: bool
-    rationale: str
     rules_applied: list[str] = field(default_factory=list)
+    overrides: list[FieldOverride] = field(default_factory=list)
 
 
 @dataclass
@@ -34,20 +35,21 @@ class GuardrailRule:
 
     name: str
     keywords: list[str] = field(default_factory=list)
-    condition: str | None = None  # "is_trivial" | "injection_flagged_high"
+    # Named pipeline condition instead of keywords, e.g. "is_trivial"
+    condition: str | None = None
     overrides: dict[str, object] = field(default_factory=dict)
     # Priority ceiling: if set, priority is capped at this maximum
     max_priority: Priority | None = None
     # Sentiment enforcement: prevent the LLM assigning these sentiments
     prevent_sentiments: list[Sentiment] = field(default_factory=list)
     force_sentiment: Sentiment | None = None
-    rationale_note: str = ""
+    # Skip this rule when a keyword (explicit-evidence) rule has already fired. Used by
+    # TRIVIAL_TICKET: "Payment failed" is short, but it is not uninformative.
+    yields_to_evidence: bool = False
 
-    def matches(self, text_lower: str, is_trivial: bool, injection_high: bool) -> bool:
-        if self.condition == "is_trivial":
-            return is_trivial
-        if self.condition == "injection_flagged_high":
-            return injection_high
+    def matches(self, text_lower: str, conditions: set[str]) -> bool:
+        if self.condition is not None:
+            return self.condition in conditions
         return any(kw in text_lower for kw in self.keywords)
 
 
@@ -73,7 +75,6 @@ RULES: list[GuardrailRule] = [
             "customer_impact": CustomerImpact.ALL_CUSTOMERS,
             "needs_human_review": True,
         },
-        rationale_note="[RULE:OUTAGE_CRITICAL — broad customer impact keyword detected in ticket]",
     ),
     GuardrailRule(
         name="SECURITY_REVIEW",
@@ -94,7 +95,6 @@ RULES: list[GuardrailRule] = [
             "needs_human_review": True,
             "priority": Priority.HIGH,
         },
-        rationale_note="[RULE:SECURITY_REVIEW — potential account compromise language detected]",
     ),
     GuardrailRule(
         name="PAYMENT_ANOMALY",
@@ -106,8 +106,7 @@ RULES: list[GuardrailRule] = [
             "billed twice",
             "payment failed",
         ],
-        overrides={"needs_human_review": True},
-        rationale_note="[RULE:PAYMENT_ANOMALY — financial anomaly requires human verification]",
+        overrides={"category": Category.BILLING, "needs_human_review": True},
     ),
     GuardrailRule(
         name="NOT_URGENT",
@@ -122,7 +121,6 @@ RULES: list[GuardrailRule] = [
             "not time-sensitive",
         ],
         max_priority=Priority.MEDIUM,
-        rationale_note="[RULE:NOT_URGENT — ticket explicitly states low urgency]",
     ),
     GuardrailRule(
         name="POSITIVE_SENTIMENT_GUARD",
@@ -140,17 +138,16 @@ RULES: list[GuardrailRule] = [
         ],
         prevent_sentiments=[Sentiment.URGENT, Sentiment.NEGATIVE],
         force_sentiment=Sentiment.POSITIVE,
-        rationale_note="[RULE:POSITIVE_SENTIMENT — explicit positive language overrides model sentiment]",
     ),
     GuardrailRule(
         name="TRIVIAL_TICKET",
         condition="is_trivial",
+        yields_to_evidence=True,
         overrides={
             "priority": Priority.LOW,
             "needs_human_review": True,
             "category": Category.UNKNOWN,
         },
-        rationale_note="[RULE:TRIVIAL_TICKET — insufficient content to classify accurately]",
     ),
     GuardrailRule(
         name="INJECTION_FLAGGED",
@@ -160,7 +157,21 @@ RULES: list[GuardrailRule] = [
             "priority": Priority.HIGH,
             "needs_human_review": True,
         },
-        rationale_note="[RULE:INJECTION_FLAGGED — potential prompt injection detected; LLM bypassed]",
+    ),
+    GuardrailRule(
+        name="MISSING_TEXT",
+        condition="missing_text",
+        overrides={
+            "category": Category.UNKNOWN,
+            "priority": Priority.LOW,
+            "customer_impact": CustomerImpact.NONE,
+            "needs_human_review": True,
+        },
+    ),
+    GuardrailRule(
+        name="OUTPUT_SAFETY_REVIEW",
+        condition="output_flagged",
+        overrides={"needs_human_review": True},
     ),
 ]
 
@@ -173,62 +184,90 @@ def apply_guardrails(
     cleaned_text: str,
     is_trivial: bool = False,
     injection_flagged_high: bool = False,
+    missing_text: bool = False,
+    output_flagged: bool = False,
 ) -> GuardrailResult:
     """
     Apply all guardrail rules sequentially.
-    Rules are non-exclusive — multiple rules may fire on a single ticket.
-    Each applied rule is recorded in rules_applied for full auditability.
+
+    Rules are non-exclusive — multiple rules may fire on a single ticket. The model's
+    rationale is never edited here; every changed field is recorded as a FieldOverride
+    so model judgment and deterministic policy stay distinguishable.
     """
-    # Start with LLM values
-    category = llm_output.category
-    priority = llm_output.priority
-    sentiment = llm_output.sentiment
-    customer_impact = llm_output.customer_impact
-    needs_human_review = llm_output.needs_human_review
-    rationale = llm_output.rationale
+    values: dict[str, Any] = {
+        "category": llm_output.category,
+        "priority": llm_output.priority,
+        "sentiment": llm_output.sentiment,
+        "customer_impact": llm_output.customer_impact,
+        "needs_human_review": llm_output.needs_human_review,
+    }
+    conditions = {
+        name
+        for name, active in (
+            ("is_trivial", is_trivial),
+            ("injection_flagged_high", injection_flagged_high),
+            ("missing_text", missing_text),
+            ("output_flagged", output_flagged),
+        )
+        if active
+    }
     rules_applied: list[str] = []
+    overrides: list[FieldOverride] = []
+
+    def set_field(name: str, value: Any, rule: str) -> None:
+        if values[name] != value:
+            overrides.append(
+                FieldOverride(
+                    field=name,
+                    model_value=getattr(llm_output, name),
+                    final_value=value,
+                    rule=rule,
+                )
+            )
+            values[name] = value
 
     text_lower = cleaned_text.lower()
 
+    evidence_matched = False
     for rule in RULES:
-        if not rule.matches(text_lower, is_trivial, injection_flagged_high):
+        if not rule.matches(text_lower, conditions):
             continue
-
+        if rule.yields_to_evidence and evidence_matched:
+            continue
+        evidence_matched = evidence_matched or bool(rule.keywords)
         rules_applied.append(rule.name)
 
-        # Apply field overrides
         for field_name, value in rule.overrides.items():
-            match field_name:
-                case "category":
-                    category = value  # type: ignore[assignment]
-                case "priority":
-                    priority = value  # type: ignore[assignment]
-                case "customer_impact":
-                    customer_impact = value  # type: ignore[assignment]
-                case "needs_human_review":
-                    needs_human_review = needs_human_review or bool(value)
+            if field_name == "needs_human_review":
+                # Rules may only escalate to human review, never clear it.
+                value = values[field_name] or bool(value)
+            set_field(field_name, value, rule.name)
 
-        # Priority ceiling
-        if rule.max_priority is not None:
-            current_idx = PRIORITY_ORDER.index(priority)
-            max_idx = PRIORITY_ORDER.index(rule.max_priority)
-            if current_idx > max_idx:
-                priority = rule.max_priority
+        if rule.max_priority is not None and PRIORITY_ORDER.index(
+            values["priority"]
+        ) > PRIORITY_ORDER.index(rule.max_priority):
+            set_field("priority", rule.max_priority, rule.name)
 
-        # Sentiment enforcement
-        if rule.force_sentiment and sentiment in rule.prevent_sentiments:
-            sentiment = rule.force_sentiment
+        if rule.force_sentiment and values["sentiment"] in rule.prevent_sentiments:
+            set_field("sentiment", rule.force_sentiment, rule.name)
 
-        # Append rule annotation to rationale
-        if rule.rationale_note:
-            rationale = f"{rationale} {rule.rationale_note}"
+    # Collapse repeated changes to one entry per field (first model value → final value).
+    collapsed: dict[str, FieldOverride] = {}
+    for ov in overrides:
+        if ov.field in collapsed:
+            collapsed[ov.field] = collapsed[ov.field].model_copy(
+                update={"final_value": ov.final_value, "rule": ov.rule}
+            )
+        else:
+            collapsed[ov.field] = ov
+    final_overrides = [ov for ov in collapsed.values() if ov.model_value != ov.final_value]
 
     return GuardrailResult(
-        category=category,
-        priority=priority,
-        sentiment=sentiment,
-        customer_impact=customer_impact,
-        needs_human_review=needs_human_review,
-        rationale=rationale[:500],  # hard cap to prevent runaway rationale
+        category=values["category"],
+        priority=values["priority"],
+        sentiment=values["sentiment"],
+        customer_impact=values["customer_impact"],
+        needs_human_review=values["needs_human_review"],
         rules_applied=rules_applied,
+        overrides=final_overrides,
     )

@@ -82,9 +82,9 @@ export function TicketCard({ result, onClose }: TicketCardProps) {
                     <span className="classification-value">{result.llm_model || 'N/A'}</span>
                   </div>
                   <div className="classification-item">
-                    <span className="classification-label">LLM Fallback</span>
+                    <span className="classification-label">Model Used</span>
                     <span className="classification-value">
-                      {result.is_llm_fallback ? '⚠️ Yes' : '✓ No'}
+                      {result.is_llm_fallback ? '⚠️ No (safe default)' : '✓ Yes'}
                     </span>
                   </div>
                 </div>
@@ -92,7 +92,9 @@ export function TicketCard({ result, onClose }: TicketCardProps) {
 
               {/* Rationale */}
               <section className="drawer-section">
-                <h3 className="drawer-section-title">Rationale</h3>
+                <h3 className="drawer-section-title">
+                  {result.is_llm_fallback ? 'Rationale (system)' : 'Rationale (model)'}
+                </h3>
                 <p className="rationale-text">{result.rationale}</p>
               </section>
 

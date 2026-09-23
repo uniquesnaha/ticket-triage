@@ -1,7 +1,7 @@
 [project]
 name = "ticket-triage-backend"
 version = "1.0.0"
-description = "Production-grade AI-powered support ticket triage API"
+description = "Support-ticket triage with calibrated structured LLM output and deterministic guardrails"
 requires-python = ">=3.12"
 
 [tool.ruff]
@@ -10,7 +10,13 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "S", "B", "C4", "PTH"]
-ignore = ["S101", "S603", "B008"]
+ignore = ["S101", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "E501"]
+# Regex pattern tables read better unwrapped.
+"app/security/input_guard.py" = ["E501"]
+"app/triage/preprocessor.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -18,11 +24,16 @@ strict = true
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "--cov=app --cov-report=term-missing --cov-report=xml -v"
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["tests/*", "*/migrations/*"]

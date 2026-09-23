@@ -1,9 +1,8 @@
 """Tests for post-LLM output safety validator."""
+
 from __future__ import annotations
 
-import pytest
-
-from app.security.output_guard import validate_output
+from app.security.output_guard import find_unsupported_evidence, validate_output
 
 
 class TestSafeOutput:
@@ -33,10 +32,8 @@ class TestUnsafeOutput:
         assert not result.is_safe
 
     def test_rationale_too_long(self) -> None:
-        long_rationale = "A" * 400
+        long_rationale = "A" * 401
         result = validate_output(long_rationale)
-        # Long rationale gets truncated — not necessarily unsafe unless > 300
-        # Our validator truncates and marks as issue
         assert "rationale_too_long" in result.issues
 
     def test_forbidden_content_blocked(self) -> None:
@@ -44,3 +41,31 @@ class TestUnsafeOutput:
         result = validate_output(malicious)
         assert not result.is_safe
         assert "forbidden_content_detected" in result.issues
+
+
+class TestEvidenceGrounding:
+    SOURCE = ["I was charged twice for order 8841. Please refund the duplicate charge."]
+
+    def test_verbatim_quote_and_number_pass(self) -> None:
+        rationale = 'Customer reports being "charged twice" for order 8841.'
+        result = validate_output(rationale, self.SOURCE)
+        assert result.is_safe
+
+    def test_quote_is_case_insensitive(self) -> None:
+        rationale = 'Ticket says "Charged Twice" which indicates a billing issue.'
+        assert validate_output(rationale, self.SOURCE).is_safe
+
+    def test_invented_quote_rejected(self) -> None:
+        rationale = 'Customer says "I will cancel my subscription" so this is urgent.'
+        result = validate_output(rationale, self.SOURCE)
+        assert not result.is_safe
+        assert "unsupported_evidence" in result.issues
+
+    def test_invented_number_rejected(self) -> None:
+        rationale = "Duplicate charge of $49.99 on order 8841 requires a refund."
+        result = validate_output(rationale, self.SOURCE)
+        assert "unsupported_evidence" in result.issues
+        assert find_unsupported_evidence(rationale, self.SOURCE) == ["49.99"]
+
+    def test_grounding_skipped_without_sources(self) -> None:
+        assert validate_output('Customer says "something else entirely".').is_safe
