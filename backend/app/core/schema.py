@@ -191,4 +191,3 @@ class HealthResponse(BaseModel):
     model: str
     version: str
     llm_configured: bool
-    auth_required: bool

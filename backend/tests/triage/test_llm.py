@@ -105,19 +105,17 @@ class TestReasoningEffort:
     def test_auto_low_for_gpt_oss(self) -> None:
         from app.core.config import Settings
 
-        s = Settings(triage_api_key="x" * 16, model_name="openai/gpt-oss-120b")
+        s = Settings(model_name="openai/gpt-oss-120b")
         assert s.effective_reasoning_effort == "low"
 
     def test_auto_unset_for_other_models(self) -> None:
         from app.core.config import Settings
 
-        s = Settings(triage_api_key="x" * 16, model_name="llama-3.3-70b-versatile")
+        s = Settings(model_name="llama-3.3-70b-versatile")
         assert s.effective_reasoning_effort is None
 
     def test_none_disables(self) -> None:
         from app.core.config import Settings
 
-        s = Settings(
-            triage_api_key="x" * 16, model_name="openai/gpt-oss-120b", llm_reasoning_effort="none"
-        )
+        s = Settings(model_name="openai/gpt-oss-120b", llm_reasoning_effort="none")
         assert s.effective_reasoning_effort is None

@@ -18,8 +18,6 @@ interface ProblemDetails {
 
 function messageFor(status: number, body: ProblemDetails | null): string {
   switch (status) {
-    case 401:
-      return 'This server requires an API key, so the web app cannot use it. Unset TRIAGE_API_KEY on the server to allow browser access.'
     case 413:
       return 'The file is too large. The limit is 4 MB.'
     case 429:
@@ -55,6 +53,13 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 90_0
 
 export const api = {
   health: () => request<HealthResponse>('/api/v1/health', {}, 10_000),
+
+  triageTickets: (tickets: { ticket_id: string; text: string }[]) =>
+    request<TriageBatchResponse>('/api/v1/triage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickets }),
+    }),
 
   triageCSV: (file: File) => {
     const form = new FormData()

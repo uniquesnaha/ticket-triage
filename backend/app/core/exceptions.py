@@ -21,11 +21,6 @@ class TriageAPIError(Exception):
         super().__init__(detail)
 
 
-class AuthenticationError(TriageAPIError):
-    def __init__(self, detail: str = "Invalid or missing API key") -> None:
-        super().__init__(401, "Unauthorized", detail, "unauthorized")
-
-
 class FileTooLargeError(TriageAPIError):
     def __init__(self, max_mb: int) -> None:
         super().__init__(

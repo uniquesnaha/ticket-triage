@@ -79,5 +79,4 @@ export interface HealthResponse {
   model: string
   version: string
   llm_configured: boolean
-  auth_required: boolean
 }

@@ -6,17 +6,16 @@ import time
 from collections import Counter
 
 import structlog
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, File, Request, UploadFile
 
 from app.core.config import get_settings
 from app.core.exceptions import FileTooLargeError, InvalidCSVError
 from app.core.rate_limit import limiter
 from app.core.schema import TriageBatchRequest, TriageBatchResponse, TriageResult
-from app.security.auth import require_api_key
 from app.triage.csv_loader import CSVFormatError, decode_csv_bytes, parse_tickets_csv
 from app.triage.pipeline import process_batch
 
-router = APIRouter(dependencies=[Depends(require_api_key)])
+router = APIRouter()
 logger = structlog.get_logger()
 
 ALLOWED_CSV_CONTENT_TYPES = {

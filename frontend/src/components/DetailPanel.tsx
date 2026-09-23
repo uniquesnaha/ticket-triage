@@ -23,12 +23,20 @@ const DECISION_FIELDS = [
 
 interface DetailPanelProps {
   result: TriageResult
-  onClose: () => void
-  onPrev: (() => void) | null
-  onNext: (() => void) | null
+  /** "panel" sits beside the queue with navigation; "inline" is embedded in a page. */
+  variant?: 'panel' | 'inline'
+  onClose?: () => void
+  onPrev?: (() => void) | null
+  onNext?: (() => void) | null
 }
 
-export function DetailPanel({ result, onClose, onPrev, onNext }: DetailPanelProps) {
+export function DetailPanel({
+  result,
+  variant = 'panel',
+  onClose,
+  onPrev = null,
+  onNext = null,
+}: DetailPanelProps) {
   const panelRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -51,7 +59,11 @@ export function DetailPanel({ result, onClose, onPrev, onNext }: DetailPanelProp
   ].filter((c) => c.items.length > 0)
 
   return (
-    <aside className="detail" ref={panelRef} aria-label={`Ticket ${result.ticket_id}`}>
+    <aside
+      className={variant === 'inline' ? 'detail detail--inline' : 'detail'}
+      ref={panelRef}
+      aria-label={`Ticket ${result.ticket_id}`}
+    >
       <header className="detail-head">
         <div className="detail-title">
           <h2>{result.ticket_id}</h2>
@@ -60,6 +72,7 @@ export function DetailPanel({ result, onClose, onPrev, onNext }: DetailPanelProp
             {result.needs_human_review && <ReviewTag />}
           </div>
         </div>
+        {variant === 'panel' && (
         <div className="detail-nav">
           <button
             type="button"
@@ -85,6 +98,7 @@ export function DetailPanel({ result, onClose, onPrev, onNext }: DetailPanelProp
             <XIcon size={16} />
           </button>
         </div>
+        )}
       </header>
 
       <section className="detail-section">

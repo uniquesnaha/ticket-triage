@@ -42,11 +42,6 @@ class Settings(BaseSettings):
         "Keep below the serverless function's maxDuration.",
     )
 
-    # ── API security ──────────────────────────────────────────────────────────
-    # Optional. Unset = open API (the web UI needs no key). Set = every triage request
-    # must send it as X-API-Key (for private or API-only deployments).
-    triage_api_key: SecretStr | None = None
-
     # ── App ───────────────────────────────────────────────────────────────────
     environment: str = "development"
     log_level: str = "INFO"
@@ -82,15 +77,6 @@ class Settings(BaseSettings):
     _split_origins = field_validator("allowed_origins", mode="before")(_split_csv)
     _split_hosts = field_validator("allowed_hosts", mode="before")(_split_csv)
 
-    @field_validator("triage_api_key")
-    @classmethod
-    def _key_strength(cls, v: SecretStr | None) -> SecretStr | None:
-        if v is None or not v.get_secret_value():
-            return None
-        if len(v.get_secret_value()) < 16:
-            raise ValueError("TRIAGE_API_KEY must be at least 16 characters")
-        return v
-
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
@@ -98,10 +84,6 @@ class Settings(BaseSettings):
     @property
     def docs_enabled(self) -> bool:
         return not self.is_production
-
-    @property
-    def auth_required(self) -> bool:
-        return self.triage_api_key is not None
 
     @property
     def llm_configured(self) -> bool:

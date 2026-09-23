@@ -20,5 +20,4 @@ async def health() -> HealthResponse:
         model=settings.model_name,
         version=settings.app_version,
         llm_configured=settings.llm_configured,
-        auth_required=settings.auth_required,
     )

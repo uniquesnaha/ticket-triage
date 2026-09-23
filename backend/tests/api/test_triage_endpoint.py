@@ -32,59 +32,11 @@ def mock_llm():
         yield m
 
 
-class TestAuth:
-    def test_no_api_key_returns_401(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/v1/triage", json={"tickets": [{"ticket_id": "T1", "text": "test"}]}
-        )
-        assert resp.status_code == 401
-
-    def test_wrong_api_key_returns_401(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/v1/triage",
-            json={"tickets": [{"ticket_id": "T1", "text": "test"}]},
-            headers={"X-API-Key": "wrong-key"},
-        )
-        assert resp.status_code == 401
-
-    def test_correct_api_key_accepted(
-        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
-    ) -> None:
-        resp = client.post(
-            "/api/v1/triage",
-            json={"tickets": [{"ticket_id": "T1", "text": "My payment failed."}]},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-
-    def test_open_mode_when_no_key_configured(
-        self, client: TestClient, mock_llm: AsyncMock
-    ) -> None:
-        from app.core.config import get_settings
-
-        settings = get_settings()
-        original = settings.triage_api_key
-        settings.triage_api_key = None
-        try:
-            resp = client.post(
-                "/api/v1/triage",
-                json={"tickets": [{"ticket_id": "T1", "text": "My payment failed."}]},
-            )
-            health = client.get("/api/v1/health").json()
-        finally:
-            settings.triage_api_key = original
-        assert resp.status_code == 200
-        assert health["auth_required"] is False
-
-
 class TestTriageJSON:
-    def test_returns_correct_structure(
-        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
-    ) -> None:
+    def test_returns_correct_structure(self, client: TestClient, mock_llm: AsyncMock) -> None:
         resp = client.post(
             "/api/v1/triage",
             json={"tickets": [{"ticket_id": "T001", "text": "I was charged twice."}]},
-            headers=auth_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -99,31 +51,26 @@ class TestTriageJSON:
         assert "preprocessing_applied" in result
         assert "guardrails_applied" in result
 
-    def test_request_id_in_response(
-        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
-    ) -> None:
+    def test_request_id_in_response(self, client: TestClient, mock_llm: AsyncMock) -> None:
         resp = client.post(
-            "/api/v1/triage",
-            json={"tickets": [{"ticket_id": "T1", "text": "test ticket"}]},
-            headers=auth_headers,
+            "/api/v1/triage", json={"tickets": [{"ticket_id": "T1", "text": "test ticket"}]}
         )
         assert "x-request-id" in resp.headers
 
-    def test_empty_tickets_rejected(self, client: TestClient, auth_headers: dict) -> None:
-        resp = client.post("/api/v1/triage", json={"tickets": []}, headers=auth_headers)
+    def test_empty_tickets_rejected(self, client: TestClient) -> None:
+        resp = client.post("/api/v1/triage", json={"tickets": []})
         assert resp.status_code == 422
 
-    def test_invalid_ticket_id_rejected(self, client: TestClient, auth_headers: dict) -> None:
+    def test_invalid_ticket_id_rejected(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/triage",
             json={"tickets": [{"ticket_id": "T1; DROP TABLE tickets--", "text": "test"}]},
-            headers=auth_headers,
         )
         assert resp.status_code == 422
 
-    def test_too_many_tickets_rejected(self, client: TestClient, auth_headers: dict) -> None:
+    def test_too_many_tickets_rejected(self, client: TestClient) -> None:
         tickets = [{"ticket_id": f"T{i}", "text": "test ticket text here"} for i in range(51)]
-        resp = client.post("/api/v1/triage", json={"tickets": tickets}, headers=auth_headers)
+        resp = client.post("/api/v1/triage", json={"tickets": tickets})
         assert resp.status_code == 422
 
 
@@ -135,44 +82,34 @@ class TestCSVUpload:
         writer.writerows(rows)
         return buf.getvalue().encode()
 
-    def test_valid_csv_upload(
-        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
-    ) -> None:
+    def test_valid_csv_upload(self, client: TestClient, mock_llm: AsyncMock) -> None:
         csv_data = self.make_csv([{"ticket_id": "T001", "text": "My login is broken."}])
         resp = client.post(
-            "/api/v1/triage/upload",
-            files={"file": ("test.csv", csv_data, "text/csv")},
-            headers=auth_headers,
+            "/api/v1/triage/upload", files={"file": ("test.csv", csv_data, "text/csv")}
         )
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
 
-    def test_missing_column_rejected(self, client: TestClient, auth_headers: dict) -> None:
+    def test_missing_column_rejected(self, client: TestClient) -> None:
         csv_data = b"id,message\nT001,test"
         resp = client.post(
-            "/api/v1/triage/upload",
-            files={"file": ("test.csv", csv_data, "text/csv")},
-            headers=auth_headers,
+            "/api/v1/triage/upload", files={"file": ("test.csv", csv_data, "text/csv")}
         )
         assert resp.status_code == 400
 
-    def test_empty_csv_rejected(self, client: TestClient, auth_headers: dict) -> None:
+    def test_empty_csv_rejected(self, client: TestClient) -> None:
         csv_data = b"ticket_id,text\n"
         resp = client.post(
-            "/api/v1/triage/upload",
-            files={"file": ("test.csv", csv_data, "text/csv")},
-            headers=auth_headers,
+            "/api/v1/triage/upload", files={"file": ("test.csv", csv_data, "text/csv")}
         )
         assert resp.status_code == 400
 
     def test_missing_text_row_still_produces_result(
-        self, client: TestClient, auth_headers: dict, mock_llm: AsyncMock
+        self, client: TestClient, mock_llm: AsyncMock
     ) -> None:
         csv_data = b"ticket_id,text\nT1,My login is broken.\nT2,\n"
         resp = client.post(
-            "/api/v1/triage/upload",
-            files={"file": ("test.csv", csv_data, "text/csv")},
-            headers=auth_headers,
+            "/api/v1/triage/upload", files={"file": ("test.csv", csv_data, "text/csv")}
         )
         assert resp.status_code == 200
         results = resp.json()["results"]
@@ -181,21 +118,15 @@ class TestCSVUpload:
         assert results[1]["input_warnings"] == ["missing_text"]
         assert mock_llm.call_count == 1  # blank row never reaches the model
 
-    def test_oversized_file_rejected(self, client: TestClient, auth_headers: dict) -> None:
+    def test_oversized_file_rejected(self, client: TestClient) -> None:
         big = b"ticket_id,text\n" + b"T1," + b"x" * (4 * 1024 * 1024 + 10) + b"\n"
-        resp = client.post(
-            "/api/v1/triage/upload",
-            files={"file": ("big.csv", big, "text/csv")},
-            headers=auth_headers,
-        )
+        resp = client.post("/api/v1/triage/upload", files={"file": ("big.csv", big, "text/csv")})
         assert resp.status_code == 413
         assert resp.headers["content-type"] == "application/problem+json"
 
-    def test_wrong_file_type_rejected(self, client: TestClient, auth_headers: dict) -> None:
+    def test_wrong_file_type_rejected(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v1/triage/upload",
-            files={"file": ("x.png", b"\x89PNG", "image/png")},
-            headers=auth_headers,
+            "/api/v1/triage/upload", files={"file": ("x.png", b"\x89PNG", "image/png")}
         )
         assert resp.status_code == 400
 

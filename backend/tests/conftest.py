@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 # Set test env vars before importing app
 # Set test env vars before importing the app (they override any local .env file).
 os.environ["GROQ_API_KEY"] = "gsk_test_groq_key_12345"
-os.environ["TRIAGE_API_KEY"] = "test-triage-key-12345"
 os.environ["ENVIRONMENT"] = "testing"
 os.environ["ALLOWED_ORIGINS"] = "http://localhost:5173"
 os.environ["ALLOWED_HOSTS"] = "localhost,testserver"
@@ -29,11 +28,6 @@ from app.main import app  # noqa: E402  (import after env setup)
 @pytest.fixture(scope="session")
 def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
-
-
-@pytest.fixture
-def auth_headers() -> dict[str, str]:
-    return {"X-API-Key": "test-triage-key-12345"}
 
 
 @pytest.fixture

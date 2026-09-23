@@ -16,7 +16,7 @@ class TestHealth:
         assert "version" in data
         assert data["llm_configured"] is True
 
-    def test_health_no_auth_required(self, client: TestClient) -> None:
+    def test_health_is_public(self, client: TestClient) -> None:
         # Health endpoint should be public
         resp = client.get("/api/v1/health")
         assert resp.status_code == 200

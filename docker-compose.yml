@@ -1,5 +1,5 @@
 # Local development: API with hot reload + Vite dev server.
-#   cp .env.example .env   # then fill in GROQ_API_KEY and TRIAGE_API_KEY
+#   cp .env.example .env   # then fill in GROQ_API_KEY
 #   docker compose up --build
 services:
   backend:
