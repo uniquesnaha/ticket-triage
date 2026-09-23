@@ -9,8 +9,7 @@ The LLM classifies against a fixed schema; rules then check that answer against 
 evidence in the ticket and may override it. Every override is recorded next to what the
 model originally said, so any decision can be explained after the fact.
 
-<!-- Replace the placeholder below with the deployment URL. -->
-- **Live app:** https://YOUR-DEPLOYMENT.vercel.app
+- **Live app:** https://ticket-triage-rho.vercel.app
 - **Assessment brief:** [docs/guidelines.md](docs/guidelines.md)
 - **Required output (one JSON object per input row):** [data/project_1.triaged.jsonl](data/project_1.triaged.jsonl), a real run over [data/project_1.csv](data/project_1.csv)
 - **Evaluation report:** [docs/evaluation.md](docs/evaluation.md)
@@ -29,7 +28,7 @@ Three ways in, all backed by the same pipeline.
 
 ### 1. Live app
 
-Open the **[live app](https://YOUR-DEPLOYMENT.vercel.app)**. Nothing to install.
+Open the **[live app](https://ticket-triage-rho.vercel.app)**. Nothing to install.
 
 1. **New triage → Try the sample (10 tickets)** runs the assessment CSV through the real
    model (about 10 to 30 seconds).
@@ -44,7 +43,7 @@ Open the **[live app](https://YOUR-DEPLOYMENT.vercel.app)**. Nothing to install.
 The API is available at the same address:
 
 ```bash
-curl -s https://YOUR-DEPLOYMENT.vercel.app/api/v1/triage \
+curl -s https://ticket-triage-rho.vercel.app/api/v1/triage \
   -H 'Content-Type: application/json' \
   -d '{"tickets": [{"ticket_id": "T100", "text": "Checkout is failing for all our EU customers."}]}'
 ```
@@ -110,22 +109,22 @@ Development tasks:
 
 ## Results at a glance
 
-Live runs of `openai/gpt-oss-120b` via Groq on a 24-case golden set (the 10 assessment
-tickets plus 14 adversarial and edge cases), prompt `triage@1.0.0`. Latest report:
+Live run of `openai/gpt-oss-120b` via Groq on a 24-case golden set (the 10 assessment
+tickets plus 14 adversarial and edge cases), prompt `triage@1.0.0`. Full report:
 [docs/evaluation.md](docs/evaluation.md).
 
-| Metric | Latest run | Previous run |
-|---|---|---|
-| Cases fully correct | **24 / 24** | 23 / 24 |
-| Category accuracy | 23 / 23 | 23 / 23 |
-| Priority within accepted range | 19 / 19 | 18 / 19 |
-| Human-review recall (tickets that must be flagged) | **14 / 14** | 14 / 14 |
-| Human-review false alarms (tickets that must not be flagged) | **0 / 8** | 0 / 8 |
-| Rules triggered as expected (injection, PII, legal, abuse, safety, …) | 13 / 13 | 13 / 13 |
-| Latency per ticket, p50 / p95 | 0.9 s / 3.8 s | 1.2 s / 9.0 s (rate-limit waits) |
+| Metric | Result |
+|---|---|
+| Cases fully correct | **24 / 24** |
+| Category accuracy | 23 / 23 |
+| Priority within accepted range | 19 / 19 |
+| Human-review recall (tickets that must be flagged) | **14 / 14** |
+| Human-review false alarms (tickets that must not be flagged) | **0 / 8** |
+| Rules triggered as expected (injection, PII, legal, abuse, safety, …) | 13 / 13 |
+| Latency per ticket, p50 / p95 | 0.9 s / 3.8 s |
 
-Both runs used the same prompt and golden set; the only difference is the model's priority
-for one ticket (see [Evaluation](#evaluation)). That variance is real, and is why both are shown.
+Model output varies slightly between runs: an earlier run with the same prompt scored
+23 / 24, missing one priority (see [Evaluation](#evaluation)).
 
 **What the rules add on top of the model.** The deterministic layer matters most where it
 should. The model alone set `needs_human_review` correctly on **16 / 19** tickets; with
@@ -410,8 +409,8 @@ pytest tests/evals/test_golden_offline.py   # same golden set, stubbed model, ru
 
 **Honest caveats.** 24 cases, authored alongside the system, is a regression baseline,
 not a benchmark. Results vary between runs even at temperature 0.1 and with an identical
-prompt. The previous run's only miss was T006 ("PAYMENT FAILED" ×3), where the model said
-`low` instead of `medium`; the latest run got it right. A stronger evaluation would use a
+prompt: an earlier run missed T006 ("PAYMENT FAILED" ×3), where the model said `low`
+instead of `medium`; the run reported above got it right. A stronger evaluation would use a
 larger, independently labelled set, several runs per case, and confidence intervals. A
 "payment anomalies are at least medium" floor would remove that variance, but I left it
 out rather than tune rules to my own test set.
